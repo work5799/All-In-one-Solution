@@ -34,8 +34,9 @@ export default function ColorChanger() {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [brushSize, setBrushSize] = useState(30);
   const [opacity, setOpacity] = useState(50);
-  const [selectedColor, setSelectedColor] = useState("#ff0000");
-  const [hexInput, setHexInput] = useState("#ff0000");
+  const defaultColor = "#ff0000";
+  const [selectedColor, setSelectedColor] = useState(defaultColor);
+  const [hexInput, setHexInput] = useState(defaultColor);
   const [mode, setMode] = useState<"full" | "brush">("full");
   const [brushMode, setBrushMode] = useState<"color" | "eraser">("color");
   const [isDrawing, setIsDrawing] = useState(false);
@@ -109,19 +110,30 @@ export default function ColorChanger() {
     setHistoryIndex(newHistory.length - 1);
   }, [history, historyIndex]);
 
-  // Apply color to entire image (simple color overlay)
+  // Apply color to entire image (simple color replacement)
   const applyFullImageColor = useCallback(() => {
-    if (!originalImageData || !canvasRef.current) return;
+    if (!originalImageData || !canvasRef.current) {
+      toast.error("No image loaded");
+      return;
+    }
     
     setIsProcessing(true);
     
-    setTimeout(() => {
+    try {
       const canvas = canvasRef.current;
-      const ctx = canvas?.getContext("2d");
-      if (!ctx || !originalImageData) {
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        toast.error("Canvas not available");
         setIsProcessing(false);
         return;
       }
+
+      console.log("Original image data:", originalImageData);
+      console.log("Selected color:", selectedColor);
+
+      const activeColor = selectedColor || defaultColor;
+      const color = hexToRgb(activeColor);
+      console.log("Parsed color:", color);
 
       const newImageData = new ImageData(
         new Uint8ClampedArray(originalImageData.data),
@@ -129,26 +141,35 @@ export default function ColorChanger() {
         originalImageData.height
       );
 
-      const color = hexToRgb(selectedColor);
-      const intensity = opacity / 100;
+      console.log("Created new image data, processing pixels...");
 
+      let processedPixels = 0;
       for (let i = 0; i < newImageData.data.length; i += 4) {
-        const r = newImageData.data[i];
-        const g = newImageData.data[i + 1];
-        const b = newImageData.data[i + 2];
-
-        // Simple linear blend: interpolate between original and selected color
-        newImageData.data[i] = Math.round(r * (1 - intensity) + color.r * intensity);
-        newImageData.data[i + 1] = Math.round(g * (1 - intensity) + color.g * intensity);
-        newImageData.data[i + 2] = Math.round(b * (1 - intensity) + color.b * intensity);
+        const alpha = newImageData.data[i + 3];
+        
+        if (alpha > 0) {
+          // Simply replace with selected color
+          newImageData.data[i] = color.r;
+          newImageData.data[i + 1] = color.g;
+          newImageData.data[i + 2] = color.b;
+          // Keep original alpha (shape preserved)
+          processedPixels++;
+        }
+        // Transparent pixels remain unchanged
       }
+
+      console.log("Processed", processedPixels, "pixels");
 
       setEditedImageData(newImageData);
       saveToHistory(newImageData);
+      toast.success("Color applied to logo");
+    } catch (error) {
+      console.error("Error applying color:", error);
+      toast.error(`Failed to apply color: ${error.message}`);
+    } finally {
       setIsProcessing(false);
-      toast.success("Color overlay applied");
-    }, 50);
-  }, [originalImageData, selectedColor, opacity, saveToHistory]);
+    }
+  }, [originalImageData, selectedColor, saveToHistory]);
 
   // Apply color at position (brush mode)
   const applyColorAtPosition = useCallback((x: number, y: number) => {
@@ -165,7 +186,8 @@ export default function ColorChanger() {
       editedImageData.height
     );
 
-    const color = hexToRgb(selectedColor);
+    const activeColor = selectedColor || defaultColor;
+    const color = hexToRgb(activeColor);
     const intensity = opacity / 100;
     const radius = brushSize;
 
@@ -189,15 +211,15 @@ export default function ColorChanger() {
           newImageData.data[idx + 2] = originalData[idx + 2];
           newImageData.data[idx + 3] = originalData[idx + 3];
         } else {
-          // Apply linear blend with selected color
           const r = newImageData.data[idx];
           const g = newImageData.data[idx + 1];
           const b = newImageData.data[idx + 2];
+          const blend = intensity * alpha;
 
-          // Simple linear interpolation between original and selected color
-          newImageData.data[idx] = Math.round(r * (1 - intensity * alpha) + color.r * intensity * alpha);
-          newImageData.data[idx + 1] = Math.round(g * (1 - intensity * alpha) + color.g * intensity * alpha);
-          newImageData.data[idx + 2] = Math.round(b * (1 - intensity * alpha) + color.b * intensity * alpha);
+          newImageData.data[idx] = Math.round(r * (1 - blend) + color.r * blend);
+          newImageData.data[idx + 1] = Math.round(g * (1 - blend) + color.g * blend);
+          newImageData.data[idx + 2] = Math.round(b * (1 - blend) + color.b * blend);
+          // alpha unchanged to preserve transparency
         }
       }
     }
@@ -469,11 +491,33 @@ export default function ColorChanger() {
                     />
                   </div>
                 </div>
-                
-                <div 
-                  className="h-12 rounded-lg border"
-                  style={{ backgroundColor: selectedColor }}
-                />
+
+                <div className="grid grid-cols-5 gap-2">
+                  {["#ff0000", "#00bcd4", "#4caf50", "#ff9800", "#9c27b0"].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => handleColorChange(preset)}
+                      className={`h-10 rounded-lg border-2 ${selectedColor === preset ? "border-black" : "border-transparent"}`}
+                      style={{ backgroundColor: preset }}
+                      aria-label={`Select ${preset}`}
+                    />
+                  ))}
+                </div>
+
+                <div className="flex gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => {
+                      setSelectedColor(defaultColor);
+                      setHexInput(defaultColor);
+                    }}
+                  >
+                    Reset to default color
+                  </Button>
+                </div>
               </CardContent>
             </Card>
 
