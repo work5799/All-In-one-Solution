@@ -109,7 +109,7 @@ export default function ColorChanger() {
     setHistoryIndex(newHistory.length - 1);
   }, [history, historyIndex]);
 
-  // Apply color to entire image (overlay blend mode)
+  // Apply color to entire image (simple color overlay)
   const applyFullImageColor = useCallback(() => {
     if (!originalImageData || !canvasRef.current) return;
     
@@ -132,31 +132,15 @@ export default function ColorChanger() {
       const color = hexToRgb(selectedColor);
       const intensity = opacity / 100;
 
-      // Overlay blend mode function
-      const overlayBlend = (base: number, blend: number) => {
-        const b = base / 255;
-        const c = blend / 255;
-        if (c < 0.5) {
-          return Math.round(2 * b * c * 255);
-        } else {
-          return Math.round((1 - 2 * (1 - b) * (1 - c)) * 255);
-        }
-      };
-
       for (let i = 0; i < newImageData.data.length; i += 4) {
         const r = newImageData.data[i];
         const g = newImageData.data[i + 1];
         const b = newImageData.data[i + 2];
 
-        // Apply overlay blend with selected color
-        const newR = overlayBlend(r, color.r);
-        const newG = overlayBlend(g, color.g);
-        const newB = overlayBlend(b, color.b);
-
-        // Blend with original based on intensity
-        newImageData.data[i] = Math.round(r + (newR - r) * intensity);
-        newImageData.data[i + 1] = Math.round(g + (newG - g) * intensity);
-        newImageData.data[i + 2] = Math.round(b + (newB - b) * intensity);
+        // Simple linear blend: interpolate between original and selected color
+        newImageData.data[i] = Math.round(r * (1 - intensity) + color.r * intensity);
+        newImageData.data[i + 1] = Math.round(g * (1 - intensity) + color.g * intensity);
+        newImageData.data[i + 2] = Math.round(b * (1 - intensity) + color.b * intensity);
       }
 
       setEditedImageData(newImageData);
@@ -205,28 +189,15 @@ export default function ColorChanger() {
           newImageData.data[idx + 2] = originalData[idx + 2];
           newImageData.data[idx + 3] = originalData[idx + 3];
         } else {
-          // Apply overlay blend mode
-          const overlayBlend = (base: number, blend: number) => {
-            const b = base / 255;
-            const c = blend / 255;
-            if (c < 0.5) {
-              return Math.round(2 * b * c * 255);
-            } else {
-              return Math.round((1 - 2 * (1 - b) * (1 - c)) * 255);
-            }
-          };
-
+          // Apply linear blend with selected color
           const r = newImageData.data[idx];
           const g = newImageData.data[idx + 1];
           const b = newImageData.data[idx + 2];
 
-          const newR = overlayBlend(r, color.r);
-          const newG = overlayBlend(g, color.g);
-          const newB = overlayBlend(b, color.b);
-
-          newImageData.data[idx] = Math.round(r + (newR - r) * intensity * alpha);
-          newImageData.data[idx + 1] = Math.round(g + (newG - g) * intensity * alpha);
-          newImageData.data[idx + 2] = Math.round(b + (newB - b) * intensity * alpha);
+          // Simple linear interpolation between original and selected color
+          newImageData.data[idx] = Math.round(r * (1 - intensity * alpha) + color.r * intensity * alpha);
+          newImageData.data[idx + 1] = Math.round(g * (1 - intensity * alpha) + color.g * intensity * alpha);
+          newImageData.data[idx + 2] = Math.round(b * (1 - intensity * alpha) + color.b * intensity * alpha);
         }
       }
     }
