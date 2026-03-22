@@ -77,17 +77,17 @@ const App = () => (
             {/* Public routes - accessible without login, with optional page lock */}
             <Route path="/" element={<DashboardLayout />}>
               <Route index element={<PageWithLock pageId="dashboard"><Index /></PageWithLock>} />
-              <Route path="image-optimizer" element={<PageWithLock pageId="image-optimizer"><ImageOptimizer /></PageWithLock>} />
-              <Route path="ai-generator" element={<PageWithLock pageId="ai-generator"><AIGenerator /></PageWithLock>} />
-              <Route path="video-optimizer" element={<PageWithLock pageId="video-optimizer"><VideoOptimizer /></PageWithLock>} />
-              <Route path="watermark" element={<PageWithLock pageId="watermark"><WatermarkPage /></PageWithLock>} />
-              <Route path="watermark-remover" element={<PageWithLock pageId="watermark-remover"><WatermarkRemover /></PageWithLock>} />
-              <Route path="color-changer" element={<PageWithLock pageId="color-changer"><LogoColorChanger /></PageWithLock>} />
-              <Route path="image-cropper" element={<PageWithLock pageId="image-cropper"><ImageCropper /></PageWithLock>} />
-              <Route path="image-resizer" element={<PageWithLock pageId="image-resizer"><ImageResizer /></PageWithLock>} />
-              <Route path="history" element={<PageWithLock pageId="history"><History /></PageWithLock>} />
+              <Route path="image-optimizer/*" element={<PageWithLock pageId="image-optimizer"><ImageOptimizer /></PageWithLock>} />
+              <Route path="ai-generator/*" element={<PageWithLock pageId="ai-generator"><AIGenerator /></PageWithLock>} />
+              <Route path="video-optimizer/*" element={<PageWithLock pageId="video-optimizer"><VideoOptimizer /></PageWithLock>} />
+              <Route path="watermark/*" element={<PageWithLock pageId="watermark"><WatermarkPage /></PageWithLock>} />
+              <Route path="watermark-remover/*" element={<PageWithLock pageId="watermark-remover"><WatermarkRemover /></PageWithLock>} />
+              <Route path="color-changer/*" element={<PageWithLock pageId="color-changer"><ColorChanger /></PageWithLock>} />
+              <Route path="image-cropper/*" element={<PageWithLock pageId="image-cropper"><ImageCropper /></PageWithLock>} />
+              <Route path="image-resizer/*" element={<PageWithLock pageId="image-resizer"><ImageResizer /></PageWithLock>} />
+              <Route path="history/*" element={<PageWithLock pageId="history"><History /></PageWithLock>} />
               {/* Settings page - requires authentication */}
-              <Route path="settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+              <Route path="settings/*" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
             </Route>
 
             {/* 404 */}
