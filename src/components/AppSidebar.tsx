@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/sidebar";
 import { getCurrentUserId, getMemberLimits, getMemberUsage, SERVICE_KEYS, SERVICE_LABELS } from "@/lib/memberLimits";
 import { getMemberLimitsConfig } from "@/lib/memberLimitsEnhanced";
+import { cn } from "@/lib/utils";
 
 const mainItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
@@ -78,8 +79,8 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader className="p-4">
-        <div className="flex items-center gap-2.5">
+      <SidebarHeader className="overflow-hidden p-4 group-data-[collapsible=icon]:px-2">
+        <div className={cn("flex items-center gap-2.5", collapsed && "justify-center gap-0")}>
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg gradient-primary">
             <Zap className="h-4 w-4 text-primary-foreground" />
           </div>
@@ -107,7 +108,7 @@ export function AppSidebar() {
                       className="transition-colors"
                       activeClassName="text-sidebar-primary font-medium"
                     >
-                      <item.icon className="mr-2 h-4 w-4" />
+                      <item.icon className={cn("h-4 w-4 shrink-0", !collapsed && "mr-2")} />
                       {!collapsed && <span>{item.title}</span>}
                     </NavLink>
                   </SidebarMenuButton>
@@ -131,7 +132,7 @@ export function AppSidebar() {
                       className="transition-colors"
                       activeClassName="text-sidebar-primary font-medium"
                     >
-                      <item.icon className="mr-2 h-4 w-4" />
+                      <item.icon className={cn("h-4 w-4 shrink-0", !collapsed && "mr-2")} />
                       {!collapsed && <span>{item.title}</span>}
                     </NavLink>
                   </SidebarMenuButton>
@@ -147,18 +148,18 @@ export function AppSidebar() {
         <SidebarMenuItem>
           <SidebarMenuButton
             onClick={isAuthenticated ? handleLogout : () => navigate("/login")}
-            className="w-full"
+            className={cn("w-full", collapsed && "justify-center")}
           >
             {isAuthenticated ? (
               <>
-                <LogOut className="mr-2 h-4 w-4" />
+                <LogOut className={cn("h-4 w-4 shrink-0", !collapsed && "mr-2")} />
                 {!collapsed && (
                   <span>Logout ({currentUser})</span>
                 )}
               </>
             ) : (
               <>
-                <LogIn className="mr-2 h-4 w-4" />
+                <LogIn className={cn("h-4 w-4 shrink-0", !collapsed && "mr-2")} />
                 {!collapsed && <span>Login</span>}
               </>
             )}
