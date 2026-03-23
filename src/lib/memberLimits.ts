@@ -40,12 +40,12 @@ export interface LimitResult {
 }
 
 const makeDefaultServiceLimits = (): Record<ServiceKey, number> => ({
-  "image-optimizer": 50,
-  "ai-generator": 30,
-  "video-optimizer": 25,
-  "image-resizer": 50,
-  watermark: 40,
-  "watermark-remover": 30,
+  "image-optimizer": 999999, // Unlimited usage
+  "ai-generator": 999999,    // Unlimited usage
+  "video-optimizer": 999999, // Unlimited usage
+  "image-resizer": 999999,   // Unlimited usage
+  watermark: 999999,         // Unlimited usage
+  "watermark-remover": 999999, // Unlimited usage
 });
 
 const makeDefaultServiceUsage = (): Record<ServiceKey, number> => ({
@@ -96,7 +96,7 @@ export const getCurrentUserId = () => {
 export const getMemberLimits = (): MemberLimits => {
   const defaults: MemberLimits = {
     serviceLimits: makeDefaultServiceLimits(),
-    downloadLimit: 100,
+    downloadLimit: 999999, // Unlimited downloads
   };
   const stored = readJson<Partial<MemberLimits>>(MEMBER_LIMITS_KEY);
   if (!stored) return defaults;
@@ -110,7 +110,7 @@ export const getMemberLimits = (): MemberLimits => {
 export const saveMemberLimits = (limits: MemberLimits) => {
   const sanitized: MemberLimits = {
     serviceLimits: mergeServiceRecord(makeDefaultServiceLimits(), limits.serviceLimits),
-    downloadLimit: sanitizeCount(limits.downloadLimit, 100),
+    downloadLimit: sanitizeCount(limits.downloadLimit, 999999), // Unlimited downloads
   };
   localStorage.setItem(MEMBER_LIMITS_KEY, JSON.stringify(sanitized));
 };

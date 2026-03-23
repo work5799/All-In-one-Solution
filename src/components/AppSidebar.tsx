@@ -13,6 +13,7 @@ import {
   LogOut,
   Palette,
   Crop,
+  FileText,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -30,6 +31,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { getCurrentUserId, getMemberLimits, getMemberUsage, SERVICE_KEYS, SERVICE_LABELS } from "@/lib/memberLimits";
+import { getMemberLimitsConfig } from "@/lib/memberLimitsEnhanced";
 
 const mainItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
@@ -41,6 +43,7 @@ const mainItems = [
   { title: "Watermark Remover", url: "/watermark-remover", icon: Eraser },
   { title: "Color Changer", url: "/color-changer", icon: Palette },
   { title: "Image Cropper", url: "/image-cropper", icon: Crop },
+  { title: "Text Transformer", url: "/text-transformer", icon: FileText },
 ];
 
 const otherItems = [
@@ -60,11 +63,12 @@ export function AppSidebar() {
 
   const isAuthenticated = typeof window !== 'undefined' && localStorage.getItem(AUTH_KEY) === "true";
   const currentUser = typeof window !== 'undefined' ? localStorage.getItem("imgopt_user") : null;
+  const config = typeof window !== "undefined" ? getMemberLimitsConfig() : null;
   const limits = typeof window !== "undefined" ? getMemberLimits() : null;
   const usage = typeof window !== "undefined" ? getMemberUsage(getCurrentUserId()) : null;
-  const totalServiceLimit = limits ? SERVICE_KEYS.reduce((sum, key) => sum + limits.serviceLimits[key], 0) : 0;
+  const totalServiceLimit = config && !config.enabled ? Infinity : limits ? SERVICE_KEYS.reduce((sum, key) => sum + limits.serviceLimits[key], 0) : 0;
   const totalServiceUsage = usage ? SERVICE_KEYS.reduce((sum, key) => sum + usage.serviceUsage[key], 0) : 0;
-  const usagePercent = totalServiceLimit > 0 ? Math.min(100, Math.round((totalServiceUsage / totalServiceLimit) * 100)) : 0;
+  const usagePercent = totalServiceLimit > 0 && totalServiceLimit !== Infinity ? Math.min(100, Math.round((totalServiceUsage / totalServiceLimit) * 100)) : 0;
 
   const handleLogout = () => {
     localStorage.removeItem(AUTH_KEY);
@@ -165,10 +169,10 @@ export function AppSidebar() {
           <div className="rounded-lg bg-sidebar-accent p-3 mt-2">
             <p className="text-xs text-sidebar-muted">Member Usage</p>
             <p className="text-sm font-medium text-sidebar-accent-foreground">
-              {totalServiceUsage} / {totalServiceLimit} service uses
+              {totalServiceUsage} / {totalServiceLimit === Infinity ? "Unlimited" : totalServiceLimit} service uses
             </p>
             <p className="text-xs text-sidebar-muted mt-0.5">
-              Downloads: {usage?.downloads || 0} / {limits?.downloadLimit || 0}
+              Downloads: {usage?.downloads || 0} / {(config && !config.enabled) || (limits && limits.downloadLimit >= 999999) ? "Unlimited" : limits?.downloadLimit || 0}
             </p>
             <div className="mt-2 h-1.5 rounded-full bg-sidebar-border">
               <div className="h-full rounded-full gradient-primary" style={{ width: `${usagePercent}%` }} />
@@ -178,7 +182,7 @@ export function AppSidebar() {
                 <div key={service} className="flex items-center justify-between text-[11px]">
                   <span className="text-sidebar-muted">{SERVICE_LABELS[service]}</span>
                   <span className="font-medium text-sidebar-accent-foreground">
-                    {usage?.serviceUsage[service] || 0} / {limits?.serviceLimits[service] || 0}
+                    {usage?.serviceUsage[service] || 0} / {(config && !config.enabled) || (limits && limits.serviceLimits[service] >= 999999) ? "Unlimited" : limits?.serviceLimits[service] || 0}
                   </span>
                 </div>
               ))}

@@ -940,37 +940,44 @@ function UsageLimitSettings() {
           </CardHeader>
           <CardContent className="space-y-4">
             <Separator />
-            {SERVICE_KEYS.map((service) => (
-              <div key={service} className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-sm font-medium">{SERVICE_LABELS[service]}</Label>
-                  <Badge variant="outline" className="font-mono text-xs">{limits.serviceLimits[service]}/day</Badge>
+            {SERVICE_KEYS.map((service) => {
+              const serviceLimit = limits.serviceLimits[service];
+              const serviceLabel = !config.enabled || serviceLimit >= 999999 ? "Unlimited" : `${serviceLimit}/day`;
+
+              return (
+                <div key={service} className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium">{SERVICE_LABELS[service]}</Label>
+                    <Badge variant="outline" className="font-mono text-xs">{serviceLabel}</Badge>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Slider
+                      value={[limits.serviceLimits[service]]}
+                      onValueChange={([v]) => handleUpdateServiceLimit(service, v)}
+                      min={0}
+                      max={100}
+                      step={1}
+                      className="flex-1"
+                    />
+                    <Input
+                      type="number"
+                      min={0}
+                      max={1000}
+                      value={limits.serviceLimits[service]}
+                      onChange={(e) => handleUpdateServiceLimit(service, Number(e.target.value))}
+                      className="w-20 font-mono text-center"
+                    />
+                  </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <Slider
-                    value={[limits.serviceLimits[service]]}
-                    onValueChange={([v]) => handleUpdateServiceLimit(service, v)}
-                    min={0}
-                    max={100}
-                    step={1}
-                    className="flex-1"
-                  />
-                  <Input
-                    type="number"
-                    min={0}
-                    max={1000}
-                    value={limits.serviceLimits[service]}
-                    onChange={(e) => handleUpdateServiceLimit(service, Number(e.target.value))}
-                    className="w-20 font-mono text-center"
-                  />
-                </div>
-              </div>
-            ))}
+              );
+            })}
             <Separator />
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label className="text-sm font-medium">Downloads</Label>
-                <Badge variant="outline" className="font-mono text-xs">{limits.downloadLimit}/day</Badge>
+                <Badge variant="outline" className="font-mono text-xs">
+                    {!config.enabled || limits.downloadLimit >= 999999 ? "Unlimited" : `${limits.downloadLimit}/day`}
+                  </Badge>
               </div>
               <div className="flex items-center gap-3">
                 <Slider

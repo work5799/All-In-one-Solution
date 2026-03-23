@@ -96,7 +96,7 @@ const makeDefaultServiceUsage = (): Record<ServiceKey, number> => ({
 });
 
 const makeDefaultLimitsConfig = (): MemberLimitsConfig => ({
-  enabled: true,
+  enabled: false, // Disabled by default - unlimited usage for all users
   dailyResetEnabled: true,
   resetHour: 0, // Midnight
   perServiceLimits: true,

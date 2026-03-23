@@ -19,6 +19,7 @@ import AdminSettingsPage from "./pages/AdminSettingsPage";
 import LogoColorChanger from "./pages/LogoColorChanger";
 import NotFound from "./pages/NotFound";
 import Login from "./pages/Login";
+import TextTransformer from "./pages/TextTransformer";
 import { HistoryProvider } from "./contexts/HistoryContext";
 import { AuthGuard } from "./components/AuthGuard";
 import PageLockGuard from "./components/PageLockGuard";
@@ -85,6 +86,7 @@ const App = () => (
               <Route path="color-changer/*" element={<PageWithLock pageId="color-changer"><ColorChanger /></PageWithLock>} />
               <Route path="image-cropper/*" element={<PageWithLock pageId="image-cropper"><ImageCropper /></PageWithLock>} />
               <Route path="image-resizer/*" element={<PageWithLock pageId="image-resizer"><ImageResizer /></PageWithLock>} />
+              <Route path="text-transformer/*" element={<PageWithLock pageId="text-transformer"><TextTransformer /></PageWithLock>} />
               <Route path="history/*" element={<PageWithLock pageId="history"><History /></PageWithLock>} />
               {/* Settings page - requires authentication */}
               <Route path="settings/*" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
