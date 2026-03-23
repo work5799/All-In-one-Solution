@@ -118,6 +118,8 @@ const TextTransformer = () => {
   const normalizeSpacing = (text: string) => text.replace(/\s+/g, ' ').trim();
   const addSpaceAfterPunctuation = (text: string) => text.replace(/([.!?])(?=\S)/g, '$1 ');
   const removeTabs = (text: string) => text.replace(/\t/g, '');
+  const removeEmDash = (text: string) => text.replace(/\u2014/g, '');
+  const removeHyphen = (text: string) => text.replace(/-/g, '');
 
   // Case functions
   const toCamelCase = (text: string) => text.replace(/(?:^\w|[A-Z]|\b\w)/g, (word, index) => index === 0 ? word.toLowerCase() : word.toUpperCase()).replace(/\s+/g, '');
@@ -425,6 +427,20 @@ const TextTransformer = () => {
                   className="h-16 flex flex-col items-center justify-center gap-2 hover:bg-[#14b8aa] transition-colors"
                 >
                   <span className="text-sm font-medium">Remove Tabs</span>
+                </Button>
+                <Button
+                  onClick={() => handleTransform(removeEmDash)}
+                  variant="outline"
+                  className="h-16 flex flex-col items-center justify-center gap-2 hover:bg-[#14b8aa] transition-colors"
+                >
+                  <span className="text-sm font-medium">{"Remove Em Dash (\u2014)"}</span>
+                </Button>
+                <Button
+                  onClick={() => handleTransform(removeHyphen)}
+                  variant="outline"
+                  className="h-16 flex flex-col items-center justify-center gap-2 hover:bg-[#14b8aa] transition-colors"
+                >
+                  <span className="text-sm font-medium">Remove Hyphen (-)</span>
                 </Button>
               </div>
             </CardContent>
