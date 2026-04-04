@@ -4,22 +4,18 @@ const USER_KEY = "imgopt_user";
 
 export const SERVICE_KEYS = [
   "image-optimizer",
-  "ai-generator",
   "video-optimizer",
   "image-resizer",
   "watermark",
-  "watermark-remover",
 ] as const;
 
 export type ServiceKey = (typeof SERVICE_KEYS)[number];
 
 export const SERVICE_LABELS: Record<ServiceKey, string> = {
   "image-optimizer": "Image Optimizer",
-  "ai-generator": "AI Generator",
   "video-optimizer": "Video Optimizer",
   "image-resizer": "Image Resizer",
   watermark: "Watermark",
-  "watermark-remover": "Watermark Remover",
 };
 
 export interface MemberLimits {
@@ -41,20 +37,16 @@ export interface LimitResult {
 
 const makeDefaultServiceLimits = (): Record<ServiceKey, number> => ({
   "image-optimizer": 999999, // Unlimited usage
-  "ai-generator": 999999,    // Unlimited usage
   "video-optimizer": 999999, // Unlimited usage
   "image-resizer": 999999,   // Unlimited usage
   watermark: 999999,         // Unlimited usage
-  "watermark-remover": 999999, // Unlimited usage
 });
 
 const makeDefaultServiceUsage = (): Record<ServiceKey, number> => ({
   "image-optimizer": 0,
-  "ai-generator": 0,
   "video-optimizer": 0,
   "image-resizer": 0,
   watermark: 0,
-  "watermark-remover": 0,
 });
 
 const sanitizeCount = (value: unknown, fallback: number) => {

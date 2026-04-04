@@ -476,7 +476,7 @@ export default function SettingsPage() {
                 <h2 className="font-semibold text-foreground">Provider Login Sessions</h2>
               </div>
               <p className="text-sm text-muted-foreground">
-                Keep your API setup and add a login-style connected session for each provider you want to use in the AI Generator.
+                Keep your API setup and add a login-style connected session for each provider you want to use across the app.
               </p>
             </div>
             <Button size="sm" onClick={saveProviderSessionSettings} disabled={!hasPendingProviderSessionChanges}>

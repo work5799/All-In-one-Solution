@@ -1018,6 +1018,7 @@ function MemberManagement() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  const memberTableServices = SERVICE_KEYS.slice(0, 2);
 
   const loadData = () => {
     setUsers(getAllUsersUsage());
@@ -1041,6 +1042,9 @@ function MemberManagement() {
   };
 
   const filteredUsers = users.filter((u) => u.userId.toLowerCase().includes(searchTerm.toLowerCase()));
+  const averageServiceUsage = analytics
+    ? SERVICE_KEYS.reduce((sum, service) => sum + analytics.averageUsage[service], 0)
+    : 0;
 
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 12 }} className="space-y-4">
@@ -1080,10 +1084,10 @@ function MemberManagement() {
           <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
             <Card className="border-0 shadow-none">
               <CardHeader className="py-3">
-                <span className="text-xs text-muted-foreground">Avg</span>
+                <span className="text-xs text-muted-foreground">Avg Uses</span>
               </CardHeader>
               <CardContent className="pt-0">
-                <p className="text-2xl font-bold text-primary">{analytics.averageUsage["ai-generator"] || 0}</p>
+                <p className="text-2xl font-bold text-primary">{averageServiceUsage}</p>
               </CardContent>
             </Card>
           </div>
@@ -1138,8 +1142,11 @@ function MemberManagement() {
                 <TableHeader>
                   <TableRow className="bg-muted/50">
                     <TableHead className="font-semibold">User</TableHead>
-                    <TableHead className="font-semibold">AI Gen</TableHead>
-                    <TableHead className="font-semibold">Watermark</TableHead>
+                    {memberTableServices.map((service) => (
+                      <TableHead key={service} className="font-semibold">
+                        {SERVICE_LABELS[service]}
+                      </TableHead>
+                    ))}
                     <TableHead className="font-semibold">Downloads</TableHead>
                     <TableHead className="font-semibold">Last Reset</TableHead>
                     <TableHead className="font-semibold text-right">Action</TableHead>
@@ -1148,7 +1155,7 @@ function MemberManagement() {
                 <TableBody>
                   {filteredUsers.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-8">
+                      <TableCell colSpan={memberTableServices.length + 4} className="text-center py-8">
                         <Users className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
                         <p className="text-sm text-muted-foreground">No users</p>
                       </TableCell>
@@ -1162,28 +1169,19 @@ function MemberManagement() {
                             <span className="font-mono text-sm">{user.userId}</span>
                           </div>
                         </TableCell>
-                        <TableCell>
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2 text-sm">
-                              <span className="font-medium">{user.serviceUsage["ai-generator"]}/{user.serviceLimits["ai-generator"]}</span>
-                              <Badge variant={user.remaining["ai-generator"] === 0 ? "destructive" : "secondary"} className="text-xs">
-                                {user.remaining["ai-generator"]} left
-                              </Badge>
+                        {memberTableServices.map((service) => (
+                          <TableCell key={service}>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2 text-sm">
+                                <span className="font-medium">{user.serviceUsage[service]}/{user.serviceLimits[service]}</span>
+                                <Badge variant={user.remaining[service] === 0 ? "destructive" : "secondary"} className="text-xs">
+                                  {user.remaining[service]} left
+                                </Badge>
+                              </div>
+                              <Progress value={user.percentageUsed[service]} className="h-1.5" />
                             </div>
-                            <Progress value={user.percentageUsed["ai-generator"]} className="h-1.5" />
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2 text-sm">
-                              <span className="font-medium">{user.serviceUsage["watermark-remover"]}/{user.serviceLimits["watermark-remover"]}</span>
-                              <Badge variant={user.remaining["watermark-remover"] === 0 ? "destructive" : "secondary"} className="text-xs">
-                                {user.remaining["watermark-remover"]} left
-                              </Badge>
-                            </div>
-                            <Progress value={user.percentageUsed["watermark-remover"]} className="h-1.5" />
-                          </div>
-                        </TableCell>
+                          </TableCell>
+                        ))}
                         <TableCell>
                           <span className="text-sm">{user.downloads}/{user.downloadLimit}</span>
                         </TableCell>

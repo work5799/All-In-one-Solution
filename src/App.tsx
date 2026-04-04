@@ -6,10 +6,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import DashboardLayout from "@/components/DashboardLayout";
 import Index from "./pages/Index";
 import ImageOptimizer from "./pages/ImageOptimizer";
-import AIGenerator from "./pages/AIGenerator";
 import VideoOptimizer from "./pages/VideoOptimizer";
 import WatermarkPage from "./pages/WatermarkPage";
-import WatermarkRemover from "./pages/WatermarkRemover";
 import ImageResizer from "./pages/ImageResizer";
 import ColorChanger from "./pages/ColorChanger";
 import ImageCropper from "./pages/ImageCropper";
@@ -79,10 +77,8 @@ const App = () => (
             <Route path="/" element={<DashboardLayout />}>
               <Route index element={<PageWithLock pageId="dashboard"><Index /></PageWithLock>} />
               <Route path="image-optimizer/*" element={<PageWithLock pageId="image-optimizer"><ImageOptimizer /></PageWithLock>} />
-              <Route path="ai-generator/*" element={<PageWithLock pageId="ai-generator"><AIGenerator /></PageWithLock>} />
               <Route path="video-optimizer/*" element={<PageWithLock pageId="video-optimizer"><VideoOptimizer /></PageWithLock>} />
               <Route path="watermark/*" element={<PageWithLock pageId="watermark"><WatermarkPage /></PageWithLock>} />
-              <Route path="watermark-remover/*" element={<PageWithLock pageId="watermark-remover"><WatermarkRemover /></PageWithLock>} />
               <Route path="color-changer/*" element={<PageWithLock pageId="color-changer"><ColorChanger /></PageWithLock>} />
               <Route path="image-cropper/*" element={<PageWithLock pageId="image-cropper"><ImageCropper /></PageWithLock>} />
               <Route path="image-resizer/*" element={<PageWithLock pageId="image-resizer"><ImageResizer /></PageWithLock>} />

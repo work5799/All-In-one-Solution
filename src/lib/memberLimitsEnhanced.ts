@@ -10,11 +10,9 @@ const ALL_USERS_USAGE_KEY = "imgopt_all_users_usage";
 
 export const SERVICE_KEYS = [
   "image-optimizer",
-  "ai-generator",
   "video-optimizer",
   "image-resizer",
   "watermark",
-  "watermark-remover",
   "image-cropper",
 ] as const;
 
@@ -22,11 +20,9 @@ export type ServiceKey = (typeof SERVICE_KEYS)[number];
 
 export const SERVICE_LABELS: Record<ServiceKey, string> = {
   "image-optimizer": "Image Optimizer",
-  "ai-generator": "AI Generator",
   "video-optimizer": "Video Optimizer",
   "image-resizer": "Image Resizer",
   watermark: "Watermark",
-  "watermark-remover": "Watermark Remover",
   "image-cropper": "Image Cropper",
 };
 
@@ -77,21 +73,17 @@ export interface UserUsageStats {
 
 const makeDefaultServiceLimits = (): Record<ServiceKey, number> => ({
   "image-optimizer": 50,
-  "ai-generator": 12,
   "video-optimizer": 25,
   "image-resizer": 50,
   watermark: 40,
-  "watermark-remover": 10,
   "image-cropper": 30,
 });
 
 const makeDefaultServiceUsage = (): Record<ServiceKey, number> => ({
   "image-optimizer": 0,
-  "ai-generator": 0,
   "video-optimizer": 0,
   "image-resizer": 0,
   watermark: 0,
-  "watermark-remover": 0,
   "image-cropper": 0,
 });
 

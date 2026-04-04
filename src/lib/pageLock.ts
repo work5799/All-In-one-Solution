@@ -34,9 +34,25 @@ interface RemotePageLockPayload extends PageLockConfig {
   pagePasswords: Record<string, string>;
 }
 
+export const LOCKABLE_PAGES = [
+  { id: "dashboard", label: "Dashboard", path: "/" },
+  { id: "image-optimizer", label: "Image Optimizer", path: "/image-optimizer" },
+  { id: "video-optimizer", label: "Video Optimizer", path: "/video-optimizer" },
+  { id: "image-resizer", label: "Image Resizer", path: "/image-resizer" },
+  { id: "watermark", label: "Watermark Adder", path: "/watermark" },
+  { id: "color-changer", label: "Color Changer", path: "/color-changer" },
+  { id: "image-cropper", label: "Image Cropper", path: "/image-cropper" },
+  { id: "text-transformer", label: "Text Transformer", path: "/text-transformer" },
+  { id: "history", label: "History", path: "/history" },
+] as const;
+
+const LOCKABLE_PAGE_IDS = new Set<string>(LOCKABLE_PAGES.map((page) => page.id));
+
+export type LockablePageId = (typeof LOCKABLE_PAGES)[number]["id"];
+
 export const DEFAULT_PAGE_LOCK_CONFIG: PageLockConfig = {
   enabled: true,
-  lockedPages: ["ai-generator", "watermark-remover"],
+  lockedPages: [],
 };
 
 export const DEFAULT_PAGE_PASSWORDS: PagePasswordConfig = {
@@ -60,7 +76,7 @@ const sanitizePageLockConfig = (value: unknown): PageLockConfig => {
           candidate.lockedPages
             .filter((pageId): pageId is string => typeof pageId === "string")
             .map((pageId) => pageId.trim())
-            .filter(Boolean)
+            .filter((pageId) => LOCKABLE_PAGE_IDS.has(pageId))
         )
       )
     : [];
@@ -194,20 +210,6 @@ const getSupabaseClient = (): SupabaseClient | null => {
     return null;
   }
 };
-
-// Available pages that can be locked
-export const LOCKABLE_PAGES = [
-  { id: "ai-generator", label: "AI Image Generator", path: "/ai-generator" },
-  { id: "watermark-remover", label: "Watermark Remover", path: "/watermark-remover" },
-  { id: "dashboard", label: "Dashboard", path: "/" },
-  { id: "image-optimizer", label: "Image Optimizer", path: "/image-optimizer" },
-  { id: "video-optimizer", label: "Video Optimizer", path: "/video-optimizer" },
-  { id: "image-resizer", label: "Image Resizer", path: "/image-resizer" },
-  { id: "watermark", label: "Watermark Adder", path: "/watermark" },
-  { id: "history", label: "History", path: "/history" },
-] as const;
-
-export type LockablePageId = (typeof LOCKABLE_PAGES)[number]["id"];
 
 // Storage helpers
 const readJson = <T>(key: string, defaultValue: T): T => {
