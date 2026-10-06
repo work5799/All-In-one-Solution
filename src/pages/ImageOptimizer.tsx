@@ -25,6 +25,8 @@ interface ImageFile {
   preview: string;
   supabasePath?: string;
   supabaseSignedUrl?: string;
+  originalWidth?: number;
+  originalHeight?: number;
   optimized?: string;
   optimizedSize?: number;
   optimizedWidth?: number;
@@ -37,6 +39,20 @@ const formatSize = (bytes: number) => {
   if (bytes < 1024) return bytes + " B";
   if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
   return (bytes / 1048576).toFixed(2) + " MB";
+};
+
+const calculateTargetDimensions = (
+  origW: number,
+  origH: number,
+  selectedWidth: number | "original"
+): { width: number; height: number } => {
+  if (selectedWidth === "original" || !selectedWidth || origW <= 0 || origH <= 0) {
+    return { width: origW, height: origH };
+  }
+  const targetW = Number(selectedWidth);
+  const ratio = targetW / origW;
+  const targetH = Math.max(1, Math.round(origH * ratio));
+  return { width: targetW, height: targetH };
 };
 
 const FFMPEG_CORE_BASE = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm";
@@ -187,6 +203,19 @@ export default function ImageOptimizer() {
       // Try browser decode for everything EXCEPT PSD/TIFF which usually require FFmpeg
       const browserDecodable = !isPsdOrTiff ? await canBrowserDecodeImage(f) : false;
       let preview = browserDecodable ? URL.createObjectURL(f) : "";
+      let originalWidth: number | undefined;
+      let originalHeight: number | undefined;
+
+      if (browserDecodable) {
+        try {
+          const bitmap = await createImageBitmap(f);
+          if (bitmap.width > 0 && bitmap.height > 0) {
+            originalWidth = bitmap.width;
+            originalHeight = bitmap.height;
+          }
+          bitmap.close();
+        } catch { /* fallback */ }
+      }
 
       let supabasePath: string | undefined;
       let supabaseSignedUrl: string | undefined;
@@ -208,6 +237,8 @@ export default function ImageOptimizer() {
         id: fileId,
         file: f,
         preview,
+        originalWidth,
+        originalHeight,
         supabasePath,
         supabaseSignedUrl,
         status: "pending",
@@ -360,14 +391,8 @@ export default function ImageOptimizer() {
           return;
         }
 
-        const drawToCanvas = (w: number, h: number, drawFn: (dw: number, dh: number) => void): { width: number; height: number } => {
-          let finalW = w;
-          let finalH = h;
-          if (maxWidth !== "original" && typeof maxWidth === "number" && maxWidth > 0) {
-            const ratio = maxWidth / w;
-            finalW = maxWidth;
-            finalH = Math.max(1, Math.round(h * ratio));
-          }
+        const drawToCanvas = (w: number, h: number, drawFn: (dw: number, dh: number) => void): { width: number; height: number; origW: number; origH: number } => {
+          const { width: finalW, height: finalH } = calculateTargetDimensions(w, h, maxWidth);
 
           canvas.width = finalW;
           canvas.height = finalH;
@@ -377,10 +402,10 @@ export default function ImageOptimizer() {
             ctx.fillRect(0, 0, finalW, finalH);
           }
           drawFn(finalW, finalH);
-          return { width: finalW, height: finalH };
+          return { width: finalW, height: finalH, origW: w, origH: h };
         };
 
-        let dims = { width: 0, height: 0 };
+        let dims = { width: 0, height: 0, origW: 0, origH: 0 };
         try {
           const bitmap = await createImageBitmap(sourceBlob);
           if (!bitmap.width || !bitmap.height) {
@@ -424,6 +449,8 @@ export default function ImageOptimizer() {
             resolve({
               ...img,
               preview: previewUrl || img.preview,
+              originalWidth: img.originalWidth || dims.origW,
+              originalHeight: img.originalHeight || dims.origH,
               optimized: URL.createObjectURL(blob),
               optimizedSize: blob.size,
               optimizedWidth: dims.width,
@@ -495,13 +522,7 @@ export default function ImageOptimizer() {
               const { image } = await decoder.decode();
               const w = image.displayWidth as number;
               const h = image.displayHeight as number;
-              let finalW = w;
-              let finalH = h;
-              if (maxWidth !== "original" && typeof maxWidth === "number" && maxWidth > 0) {
-                const ratio = maxWidth / w;
-                finalW = maxWidth;
-                finalH = Math.max(1, Math.round(h * ratio));
-              }
+              const { width: finalW, height: finalH } = calculateTargetDimensions(w, h, maxWidth);
               const cvs = document.createElement("canvas");
               cvs.width = finalW; cvs.height = finalH;
               const cx = cvs.getContext("2d", { alpha: isPng }) as CanvasRenderingContext2D;
@@ -515,6 +536,8 @@ export default function ImageOptimizer() {
                   return {
                     ...img,
                     preview: previewUrl || img.preview,
+                    originalWidth: img.originalWidth || w,
+                    originalHeight: img.originalHeight || h,
                     optimized: URL.createObjectURL(optimized),
                     optimizedSize: optimized.size,
                     optimizedWidth: finalW,
@@ -821,7 +844,7 @@ export default function ImageOptimizer() {
                 <label className="text-sm font-medium text-card-foreground">
                   Resolution / Width
                 </label>
-                <span className="text-xs text-muted-foreground font-mono">
+                <span className="text-xs text-primary font-mono font-medium">
                   {maxWidth === "original" ? "Original" : `${maxWidth}px`}
                 </span>
               </div>
@@ -848,6 +871,16 @@ export default function ImageOptimizer() {
                   </button>
                 ))}
               </div>
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-2 px-0.5">
+                <span>Dynamic Height:</span>
+                <span className="font-mono text-primary font-medium">
+                  {maxWidth === "original"
+                    ? "100% original aspect"
+                    : files[0]?.originalWidth && files[0]?.originalHeight
+                      ? `${maxWidth}px × ${Math.max(1, Math.round(files[0].originalHeight * (Number(maxWidth) / files[0].originalWidth)))}px`
+                      : `${maxWidth}px × Auto`}
+                </span>
+              </div>
             </div>
 
             <div className="space-y-2 pt-1">
@@ -872,10 +905,9 @@ export default function ImageOptimizer() {
               {files.some(f => f.status === "done" || f.status === "error") && (
                 <Button
                   type="button"
-                  variant="outline"
                   onClick={() => handleReoptimize()}
                   disabled={processing}
-                  className="w-full border-primary/50 text-primary hover:bg-primary hover:text-primary-foreground font-medium shadow-sm transition-colors"
+                  className="w-full bg-secondary text-foreground hover:bg-primary hover:text-white border border-border/80 font-semibold transition-colors shadow-sm"
                 >
                   {processing ? (
                     <>
@@ -884,7 +916,7 @@ export default function ImageOptimizer() {
                     </>
                   ) : (
                     <>
-                      <RotateCcw className="mr-2 h-4 w-4" />
+                      <RotateCcw className="mr-2 h-4 w-4 text-primary group-hover:text-white" />
                       Re-optimize All
                     </>
                   )}
@@ -963,6 +995,11 @@ export default function ImageOptimizer() {
                       ) : (
                         <>
                           Original: {formatSize(f.file.size)}
+                          {f.originalWidth && f.originalHeight ? (
+                            <span className="text-muted-foreground font-mono text-[11px] ml-1">
+                              ({f.originalWidth}×{f.originalHeight}px)
+                            </span>
+                          ) : null}
                           {f.optimizedSize != null && (
                             <>
                               {" → "}
@@ -974,7 +1011,7 @@ export default function ImageOptimizer() {
                                 (−{Math.round((1 - f.optimizedSize / f.file.size) * 100)}%)
                               </span>
                               {f.optimizedWidth && f.optimizedHeight ? (
-                                <span className="text-muted-foreground ml-1 font-mono text-[11px]">
+                                <span className="text-primary font-mono text-[11px] ml-1 font-semibold">
                                   ({f.optimizedWidth}×{f.optimizedHeight}px)
                                 </span>
                               ) : null}
@@ -998,7 +1035,7 @@ export default function ImageOptimizer() {
                           title="Re-optimize with current settings"
                           disabled={processing}
                           onClick={() => handleReoptimize(f.id)}
-                          className="hover:text-primary"
+                          className="text-muted-foreground hover:bg-primary hover:text-white transition-colors"
                         >
                           <RotateCcw className="h-4 w-4" />
                         </Button>
