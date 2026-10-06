@@ -17,6 +17,14 @@ import {
   Film,
   Zap,
   X,
+  Sparkles,
+  SlidersHorizontal,
+  Settings2,
+  Check,
+  ShieldCheck,
+  Gauge,
+  FileVideo,
+  Layers,
 } from "lucide-react";
 import { toast } from "sonner";
 import JSZip from "jszip";
@@ -779,71 +787,171 @@ export default function VideoOptimizer() {
         <div className="space-y-4 lg:col-span-1">
           <div className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-card">
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold uppercase tracking-wider text-card-foreground">Settings</h2>
-              <span className="text-[11px] text-muted-foreground font-mono">
+              <div className="flex items-center gap-2">
+                <Settings2 className="h-4 w-4 text-primary" />
+                <h2 className="text-sm font-semibold uppercase tracking-wider text-card-foreground">
+                  Optimization Settings
+                </h2>
+              </div>
+              <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-primary/10 text-primary font-medium">
                 {outputFormat.toUpperCase()} • {resolution}
               </span>
             </div>
 
-            {/* Output Format */}
+            {/* Output Format Tabs / Buttons */}
             <div>
-              <label className="text-sm font-medium text-card-foreground">Output Format</label>
-              <Select value={outputFormat} onValueChange={(value) => setOutputFormat(value as OutputFormat)}>
-                <SelectTrigger className="mt-1.5">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="mp4">MP4 (Best Compatibility & Ultra Fast)</SelectItem>
-                  <SelectItem value="webm">WebM (VP8/Opus Web Optimized)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Output Resolution */}
-            <div>
-              <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-card-foreground">Resolution</label>
-                <span className="text-[11px] text-primary font-medium">
-                  {resolution === "720p" || resolution === "1080p" ? "⚡ Fast Export" : ""}
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Film className="h-3.5 w-3.5 text-primary" />
+                  Format
+                </label>
+                <span className="text-[11px] text-muted-foreground">
+                  {outputFormat === "mp4" ? "Universal compatibility" : "Modern web format"}
                 </span>
               </div>
-              <Select value={resolution} onValueChange={(value) => setResolution(value as ResolutionMode)}>
-                <SelectTrigger className="mt-1.5">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="original">Original (Keep Source Resolution)</SelectItem>
-                  <SelectItem value="1080p">1080p - Full HD (1920×1080)</SelectItem>
-                  <SelectItem value="720p">720p - HD (1280×720 • Recommended)</SelectItem>
-                  <SelectItem value="480p">480p - SD (854×480 • Very Fast)</SelectItem>
-                  <SelectItem value="360p">360p - Low (640×360 • Smallest)</SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setOutputFormat("mp4")}
+                  className={`flex flex-col items-start p-2.5 rounded-lg border text-left transition-all ${
+                    outputFormat === "mp4"
+                      ? "border-primary bg-primary/10 text-card-foreground shadow-sm"
+                      : "border-border/60 bg-secondary/40 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full">
+                    <span className="text-xs font-bold text-foreground">MP4 (H.264)</span>
+                    {outputFormat === "mp4" && <Check className="h-3.5 w-3.5 text-primary" />}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground mt-0.5">Ultra Fast • All Devices</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setOutputFormat("webm")}
+                  className={`flex flex-col items-start p-2.5 rounded-lg border text-left transition-all ${
+                    outputFormat === "webm"
+                      ? "border-primary bg-primary/10 text-card-foreground shadow-sm"
+                      : "border-border/60 bg-secondary/40 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full">
+                    <span className="text-xs font-bold text-foreground">WebM (VP8)</span>
+                    {outputFormat === "webm" && <Check className="h-3.5 w-3.5 text-primary" />}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground mt-0.5">Lightweight • Web Ready</span>
+                </button>
+              </div>
             </div>
 
-            {/* Compression Level */}
+            {/* Output Resolution Pills */}
             <div>
-              <label className="text-sm font-medium text-card-foreground">Compression Level</label>
-              <Select value={compression} onValueChange={(value) => setCompression(value as CompressionMode)}>
-                <SelectTrigger className="mt-1.5">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="low">Low - Maximum Sharpness (Lossless / Crystal Clear)</SelectItem>
-                  <SelectItem value="medium">Medium - Balanced (Recommended • Sharp & Fast)</SelectItem>
-                  <SelectItem value="high">High - Maximum Compression (~75-80% smaller)</SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <SlidersHorizontal className="h-3.5 w-3.5 text-primary" />
+                  Resolution / Resize
+                </label>
+                <span className="text-[11px] font-medium text-primary">
+                  {resolution === "720p" ? "★ Recommended" : resolution === "original" ? "Original Size" : ""}
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {[
+                  { id: "original", label: "Original", sub: "Source" },
+                  { id: "1080p", label: "1080p", sub: "Full HD" },
+                  { id: "720p", label: "720p", sub: "Fast HD" },
+                  { id: "480p", label: "480p", sub: "SD" },
+                  { id: "360p", label: "360p", sub: "Smallest" },
+                ].map((item) => {
+                  const active = resolution === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setResolution(item.id as ResolutionMode)}
+                      className={`flex flex-col items-center justify-center py-2 px-1 rounded-lg border text-center transition-all ${
+                        active
+                          ? "border-primary bg-primary text-primary-foreground font-semibold shadow-sm"
+                          : "border-border/70 bg-secondary/40 text-foreground hover:bg-secondary hover:border-primary/50"
+                      }`}
+                    >
+                      <span className="text-xs font-medium leading-none">{item.label}</span>
+                      <span className={`text-[10px] mt-1 ${active ? "text-primary-foreground/80" : "text-muted-foreground"}`}>
+                        {item.sub}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Compression Level Buttons */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Gauge className="h-3.5 w-3.5 text-primary" />
+                  Quality & Compression
+                </label>
+              </div>
+              <div className="space-y-1.5">
+                {[
+                  {
+                    id: "low",
+                    title: "Low Compression",
+                    badge: "100% Sharp",
+                    desc: "Lossless quality • Crystal clear details & faces",
+                  },
+                  {
+                    id: "medium",
+                    title: "Medium (Recommended)",
+                    badge: "Fast & Crisp",
+                    desc: "Optimal balance • Sharp video with ~60-75% size reduction",
+                  },
+                  {
+                    id: "high",
+                    title: "High Compression",
+                    badge: "Smallest Size",
+                    desc: "Maximum space saving (~80%+) • Good for email & Discord",
+                  },
+                ].map((opt) => {
+                  const isSelected = compression === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setCompression(opt.id as CompressionMode)}
+                      className={`w-full p-2.5 rounded-lg border text-left transition-all flex items-start justify-between ${
+                        isSelected
+                          ? "border-primary bg-primary/10 text-card-foreground shadow-sm ring-1 ring-primary/40"
+                          : "border-border/60 bg-secondary/30 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                      }`}
+                    >
+                      <div className="min-w-0 pr-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`text-xs font-semibold ${isSelected ? "text-primary" : "text-foreground"}`}>
+                            {opt.title}
+                          </span>
+                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-secondary text-secondary-foreground font-medium">
+                            {opt.badge}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">{opt.desc}</p>
+                      </div>
+                      {isSelected && <Check className="h-4 w-4 text-primary shrink-0 mt-0.5" />}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Audio Bitrate */}
             <div>
               <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-card-foreground">
-                  Audio Bitrate: {audioBitrate}kbps
+                <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Audio Quality: <span className="text-foreground font-mono">{audioBitrate} kbps</span>
                 </label>
-                <span className="text-xs text-muted-foreground font-mono">
-                  {outputFormat === "webm" ? "Opus" : "AAC"}
+                <span className="text-[11px] text-primary font-mono font-medium">
+                  {outputFormat === "webm" ? "Opus (48kHz)" : "AAC (44.1kHz)"}
                 </span>
               </div>
               <Slider
@@ -852,10 +960,10 @@ export default function VideoOptimizer() {
                 min={64}
                 max={192}
                 step={32}
-                className="mt-2"
+                className="mt-2.5"
               />
-              <div className="mt-1 flex justify-between text-[11px] text-muted-foreground">
-                <span>64k (Voice)</span>
+              <div className="mt-1.5 flex justify-between text-[10px] text-muted-foreground font-medium">
+                <span>64k (Speech)</span>
                 <span>96k (Normal)</span>
                 <span>128k (Music)</span>
                 <span>192k (Hi-Fi)</span>
@@ -864,50 +972,58 @@ export default function VideoOptimizer() {
 
             {/* Action Buttons */}
             <div className="space-y-2 pt-1">
-              <Button
-                onClick={handleOptimize}
-                disabled={!hasPending || processing}
-                className="w-full border-0 gradient-primary text-primary-foreground disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {processing ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    {globalProgress < 10 ? "Preparing..." : "Optimizing..."} {globalProgress}%
-                  </>
-                ) : (
-                  <>
-                    Optimize Videos
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </>
-                )}
-              </Button>
+              {/* Primary Optimize button shown when videos are pending or none completed yet */}
+              {(!hasDoneOrError || hasPending) && (
+                <Button
+                  onClick={handleOptimize}
+                  disabled={!hasPending || processing}
+                  className="w-full h-10 border-0 gradient-primary text-primary-foreground font-semibold shadow-md disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-95 transition-all"
+                >
+                  {processing ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      {globalProgress < 10 ? "Preparing Engine..." : `Encoding (${globalProgress}%)`}
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="mr-2 h-4 w-4" />
+                      Optimize Videos ({files.filter((f) => f.status === "pending").length || files.length})
+                      <ArrowRight className="ml-2 h-4 w-4" />
+                    </>
+                  )}
+                </Button>
+              )}
 
-              {/* Re-optimize All Button - active when videos are completed */}
+              {/* Re-optimize All Button - active when all or some videos are completed */}
               {hasDoneOrError && (
                 <Button
                   type="button"
                   onClick={() => handleReoptimize()}
                   disabled={processing}
-                  className="w-full bg-primary/10 hover:bg-primary text-primary hover:text-white border border-primary/30 font-semibold transition-all shadow-sm"
+                  className="w-full h-10 bg-primary/10 hover:bg-primary text-primary hover:text-white border border-primary/30 font-semibold transition-all shadow-sm group"
                 >
                   {processing ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Re-optimizing…
+                      Re-optimizing ({globalProgress}%)
                     </>
                   ) : (
                     <>
-                      <RotateCcw className="mr-2 h-4 w-4 transition-colors" />
-                      Re-optimize All
+                      <RotateCcw className="mr-2 h-4 w-4 text-primary group-hover:text-white transition-colors" />
+                      Re-optimize All ({files.length})
                     </>
                   )}
                 </Button>
               )}
 
               {doneFiles.length > 1 && (
-                <Button variant="outline" onClick={downloadAll} className="w-full">
-                  <Package className="mr-2 h-4 w-4" />
-                  Download ZIP ({doneFiles.length})
+                <Button
+                  variant="outline"
+                  onClick={downloadAll}
+                  className="w-full h-10 border-border font-semibold hover:border-primary/50"
+                >
+                  <Package className="mr-2 h-4 w-4 text-primary" />
+                  Download ZIP ({doneFiles.length} videos)
                 </Button>
               )}
             </div>
@@ -958,6 +1074,52 @@ export default function VideoOptimizer() {
             label="Drop videos here or click to browse"
             sublabel="MP4, WebM, MOV, AVI, MKV • Instant local PC processing"
           />
+
+          {/* Video List Header & Stats */}
+          {files.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 px-1 pt-1">
+              <div className="flex items-center gap-2">
+                <FileVideo className="h-4 w-4 text-primary" />
+                <span className="text-sm font-semibold text-foreground">
+                  Video Queue ({files.length})
+                </span>
+                {doneFiles.length > 0 && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/10 text-green-600 font-medium border border-green-500/20">
+                    {doneFiles.length} Completed
+                  </span>
+                )}
+                {hasPending && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium border border-primary/20">
+                    {files.filter((f) => f.status === "pending").length} Ready
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                {doneFiles.length > 1 && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={downloadAll}
+                    className="h-8 text-xs font-semibold gap-1.5"
+                  >
+                    <Package className="h-3.5 w-3.5 text-primary" />
+                    Download All ZIP
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={processing}
+                  onClick={() => setFiles([])}
+                  className="h-8 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive gap-1"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Clear List
+                </Button>
+              </div>
+            </div>
+          )}
 
           <AnimatePresence>
             {files.map((fileObj) => (
@@ -1050,45 +1212,51 @@ export default function VideoOptimizer() {
                   </div>
 
                   {/* Card Actions */}
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-2 shrink-0">
                     {fileObj.status === "done" && fileObj.outputUrl && (
                       <>
                         {/* Single Video Re-optimize button */}
                         <Button
-                          size="icon"
-                          variant="ghost"
-                          title="Re-optimize this video with current settings"
+                          size="sm"
+                          variant="outline"
+                          title="Re-optimize with current settings"
                           disabled={processing}
                           onClick={() => handleReoptimize(fileObj.id)}
-                          className="text-muted-foreground hover:bg-primary hover:text-white transition-colors"
+                          className="h-8 text-xs font-medium text-muted-foreground hover:bg-primary hover:text-white hover:border-primary transition-all gap-1.5"
                         >
-                          <RotateCcw className="h-4 w-4" />
+                          <RotateCcw className="h-3.5 w-3.5" />
+                          <span className="hidden sm:inline">Re-optimize</span>
                         </Button>
 
                         {/* Download button */}
                         <Button
-                          size="icon"
-                          variant="ghost"
+                          size="sm"
                           title="Download optimized video"
                           onClick={() => downloadVideo(fileObj)}
+                          className="h-8 text-xs font-semibold gradient-primary text-white border-0 shadow-sm gap-1.5"
                         >
-                          <Download className="h-4 w-4" />
+                          <Download className="h-3.5 w-3.5" />
+                          <span>Download</span>
                         </Button>
                       </>
                     )}
 
                     {fileObj.status === "done" ? (
-                      <CheckCircle2 className="h-5 w-5 text-green-500" />
+                      <div className="hidden sm:flex items-center text-green-500" title="Completed">
+                        <CheckCircle2 className="h-5 w-5" />
+                      </div>
                     ) : null}
 
                     {fileObj.status === "error" && (
                       <Button
-                        size="icon"
-                        variant="ghost"
+                        size="sm"
+                        variant="outline"
                         title="Retry optimization"
                         onClick={() => handleReoptimize(fileObj.id)}
+                        className="h-8 text-xs text-primary border-primary/30 hover:bg-primary/10 gap-1.5"
                       >
-                        <RotateCcw className="h-4 w-4 text-primary" />
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        <span>Retry</span>
                       </Button>
                     )}
 
@@ -1097,8 +1265,9 @@ export default function VideoOptimizer() {
                       variant="ghost"
                       title="Remove file"
                       onClick={() => setFiles((prev) => prev.filter((item) => item.id !== fileObj.id))}
+                      className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                     >
-                      <Trash2 className="h-4 w-4 text-destructive" />
+                      <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
                 </div>
