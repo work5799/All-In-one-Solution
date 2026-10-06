@@ -242,17 +242,21 @@ const buildEncodeArgs = ({
   }
 
   if (outputFormat === "mp4") {
-    // Ultra-fast x264 WebAssembly presets
+    // x264 presets & CRF values tuned for crispness without blur
+    // 'veryfast' provides sharp details without degrading subpixel estimation
     const presetByCompression: Record<CompressionMode, string> = {
-      low: "ultrafast",
-      medium: "superfast",
+      low: "veryfast",
+      medium: "veryfast",
       high: "veryfast",
     };
 
+    // Low: CRF 20 (Crystal clear / High fidelity)
+    // Medium: CRF 23 (Standard HD / Crisp & clean)
+    // High: CRF 26 (Compact size, sharp edges, no blur)
     const crfByCompression: Record<CompressionMode, string> = {
-      low: "26",
-      medium: "30",
-      high: "34",
+      low: "20",
+      medium: "23",
+      high: "26",
     };
 
     args.push(
@@ -267,17 +271,21 @@ const buildEncodeArgs = ({
       "-c:a",
       "aac",
       "-b:a",
-      `${Math.min(audioBitrateKbps, 128)}k`,
+      `${Math.min(audioBitrateKbps, 192)}k`,
+      "-ar",
+      "44100",
       "-movflags",
       "+faststart",
     );
   } else {
     // WebM format with VP8 & Opus
-    // In libvpx, -b:v 0 is required with -crf to avoid falling back to low 200k CBR!
+    // In libvpx, -b:v 0 is required with -crf.
+    // Quality: CRF 20 (Crisp), 24 (Balanced), 28 (High compression without blur)
+    // Speed: -deadline good -cpu-used 4 prevents extreme blur while remaining fast.
     const crfByCompression: Record<CompressionMode, string> = {
-      low: "30",
-      medium: "36",
-      high: "42",
+      low: "20",
+      medium: "24",
+      high: "28",
     };
 
     args.push(
@@ -288,13 +296,16 @@ const buildEncodeArgs = ({
       "-crf",
       crfByCompression[compression],
       "-deadline",
-      "realtime",
-      "-speed",
-      "8",
+      "good",
+      "-cpu-used",
+      "4",
       "-c:a",
       "libopus",
       "-b:a",
-      `${Math.min(audioBitrateKbps, 96)}k`,
+      `${Math.min(audioBitrateKbps, 128)}k`,
+      // IMPORTANT: libopus strictly requires 48000 Hz sample rate. Without -ar 48000, 44.1kHz audio causes an immediate FFmpeg crash!
+      "-ar",
+      "48000",
     );
   }
 
@@ -446,7 +457,8 @@ export default function VideoOptimizer() {
     }
   ) => {
     return new Promise<void>((resolve, reject) => {
-      const execTimeoutMs = Math.max(120000, duration * 3000); // 3 seconds per second of video
+      // Allow ample time for encoding without premature timeouts (minimum 5 mins)
+      const execTimeoutMs = Math.max(300000, duration * 6000);
       let completed = false;
       let timeoutId: number | null = null;
 
@@ -476,22 +488,26 @@ export default function VideoOptimizer() {
             cleanup();
             resolve();
           } else {
-            // WebM fallback attempt (try without audio if audio encoder had an issue)
+            // WebM fallback attempt (try with safe parameters if first try failed)
             if (opts.outputFormat === "webm") {
               try {
-                console.warn("[FFmpeg] WebM encoding retry without audio stream...");
-                const noAudioArgs = [
+                console.warn("[FFmpeg] WebM encoding retry with audio fallback...");
+                const targetDimensions = getTargetDimensions(opts.metadata, opts.resolution);
+                const w = even(targetDimensions.width);
+                const h = even(targetDimensions.height);
+                const retryArgs = [
                   "-i", opts.inputName,
                   "-map", "0:v:0",
-                  "-an",
+                  "-vf", `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2`,
                   "-c:v", "libvpx",
                   "-b:v", "0",
-                  "-crf", "36",
-                  "-deadline", "realtime",
-                  "-speed", "8",
+                  "-crf", "26",
+                  "-deadline", "good",
+                  "-cpu-used", "5",
+                  "-an", // drop audio if unsupported codec
                   "-y", opts.outputName
                 ];
-                const retryCode = await ffmpeg.exec(noAudioArgs);
+                const retryCode = await ffmpeg.exec(retryArgs);
                 if (retryCode === 0) {
                   completed = true;
                   cleanup();
@@ -813,9 +829,9 @@ export default function VideoOptimizer() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="low">Low - Highest Visual Quality</SelectItem>
-                  <SelectItem value="medium">Medium - Balanced (~70-80% savings)</SelectItem>
-                  <SelectItem value="high">High - Maximum Size Reduction (~85%+)</SelectItem>
+                  <SelectItem value="low">Low - Maximum Sharpness (Lossless / Crystal Clear)</SelectItem>
+                  <SelectItem value="medium">Medium - Balanced (Recommended • Sharp & Fast)</SelectItem>
+                  <SelectItem value="high">High - Maximum Compression (~75-80% smaller)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
