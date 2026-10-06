@@ -643,8 +643,9 @@ export default function VideoOptimizer() {
 
     for (const fileObj of targetFiles) {
       const ext = fileObj.file.name.split(".").pop()?.toLowerCase() || "mp4";
-      const inputName = `in_${fileObj.id.slice(0, 8)}.${ext}`;
-      const outputName = `out_${fileObj.id.slice(0, 8)}.${outputFormat}`;
+      const fileTimestamp = Date.now();
+      const inputName = `in_${fileObj.id.slice(0, 8)}_${fileTimestamp}.${ext}`;
+      const outputName = `out_${fileObj.id.slice(0, 8)}_${fileTimestamp}.${outputFormat}`;
       currentFileIdRef.current = fileObj.id;
       currentFileProgressRef.current = 0;
       currentDurationRef.current = fileObj.duration || 10;
@@ -656,6 +657,8 @@ export default function VideoOptimizer() {
 
       try {
         applyProgress(2);
+        // Clean engine reset ensures zero memory accumulation from previous runs
+        resetFFmpeg();
         const ffmpeg = await loadFFmpeg();
         applyProgress(8);
 
@@ -900,7 +903,8 @@ export default function VideoOptimizer() {
     const targetFiles = targetId ? files.filter((f) => f.id === targetId) : files;
     if (!targetFiles.length || processing) return;
 
-    // Immediately reset progress bars to 0 for a crisp user feedback
+    // Immediately reset engine & progress bars to 0 for crisp user feedback
+    resetFFmpeg();
     stopFallbackProgress();
     currentFileProgressRef.current = 0;
     completedRef.current = 0;
