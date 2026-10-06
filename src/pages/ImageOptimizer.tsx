@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Download, Trash2, ArrowRight, Package, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Download, Trash2, ArrowRight, Package, Loader2, AlertCircle, CheckCircle2, RotateCcw } from "lucide-react";
 import { DropZone } from "@/components/DropZone";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -27,6 +27,8 @@ interface ImageFile {
   supabaseSignedUrl?: string;
   optimized?: string;
   optimizedSize?: number;
+  optimizedWidth?: number;
+  optimizedHeight?: number;
   status: "pending" | "processing" | "done" | "error";
   errorMsg?: string;
 }
@@ -141,6 +143,7 @@ export default function ImageOptimizer() {
   const [files, setFiles] = useState<ImageFile[]>([]);
   const [quality, setQuality] = useState(80);
   const [outputFormat, setOutputFormat] = useState("webp");
+  const [maxWidth, setMaxWidth] = useState<number | "original">("original");
   const [processing, setProcessing] = useState(false);
   const ffmpegRef = useRef<FFmpeg | null>(null);
   const cleanupTimeoutsRef = useRef<Record<string, number>>({});
@@ -357,17 +360,27 @@ export default function ImageOptimizer() {
           return;
         }
 
-        const drawToCanvas = (w: number, h: number, drawFn: () => void) => {
-          canvas.width = w;
-          canvas.height = h;
+        const drawToCanvas = (w: number, h: number, drawFn: (dw: number, dh: number) => void): { width: number; height: number } => {
+          let finalW = w;
+          let finalH = h;
+          if (maxWidth !== "original" && typeof maxWidth === "number" && maxWidth > 0) {
+            const ratio = maxWidth / w;
+            finalW = maxWidth;
+            finalH = Math.max(1, Math.round(h * ratio));
+          }
+
+          canvas.width = finalW;
+          canvas.height = finalH;
           if (isJpeg) {
             // Fill white so transparent areas don't become black in JPEG
             ctx.fillStyle = "#ffffff";
-            ctx.fillRect(0, 0, w, h);
+            ctx.fillRect(0, 0, finalW, finalH);
           }
-          drawFn();
+          drawFn(finalW, finalH);
+          return { width: finalW, height: finalH };
         };
 
+        let dims = { width: 0, height: 0 };
         try {
           const bitmap = await createImageBitmap(sourceBlob);
           if (!bitmap.width || !bitmap.height) {
@@ -375,7 +388,7 @@ export default function ImageOptimizer() {
             resolve(null);
             return;
           }
-          drawToCanvas(bitmap.width, bitmap.height, () => ctx.drawImage(bitmap, 0, 0));
+          dims = drawToCanvas(bitmap.width, bitmap.height, (dw, dh) => ctx.drawImage(bitmap, 0, 0, dw, dh));
           bitmap.close();
         } catch {
           // Fallback to HTMLImageElement for better format support
@@ -387,15 +400,15 @@ export default function ImageOptimizer() {
                 resolveLoad(false);
                 return;
               }
-              drawToCanvas(image.naturalWidth, image.naturalHeight, () => ctx.drawImage(image, 0, 0));
+              dims = drawToCanvas(image.naturalWidth, image.naturalHeight, (dw, dh) => ctx.drawImage(image, 0, 0, dw, dh));
               resolveLoad(true);
             };
             image.onerror = () => {
-              URL.revokeObjectURL(localUrl);
               resolveLoad(false);
             };
             image.src = localUrl;
           });
+          URL.revokeObjectURL(localUrl);
           if (!loaded) {
             resolve(null);
             return;
@@ -413,6 +426,8 @@ export default function ImageOptimizer() {
               preview: previewUrl || img.preview,
               optimized: URL.createObjectURL(blob),
               optimizedSize: blob.size,
+              optimizedWidth: dims.width,
+              optimizedHeight: dims.height,
               status: "done",
             });
           },
@@ -480,20 +495,31 @@ export default function ImageOptimizer() {
               const { image } = await decoder.decode();
               const w = image.displayWidth as number;
               const h = image.displayHeight as number;
+              let finalW = w;
+              let finalH = h;
+              if (maxWidth !== "original" && typeof maxWidth === "number" && maxWidth > 0) {
+                const ratio = maxWidth / w;
+                finalW = maxWidth;
+                finalH = Math.max(1, Math.round(h * ratio));
+              }
               const cvs = document.createElement("canvas");
-              cvs.width = w; cvs.height = h;
+              cvs.width = finalW; cvs.height = finalH;
               const cx = cvs.getContext("2d", { alpha: isPng }) as CanvasRenderingContext2D;
               if (cx) {
-                if (!isPng) { cx.fillStyle = "#ffffff"; cx.fillRect(0, 0, w, h); }
-                cx.drawImage(image as any, 0, 0);
+                if (!isPng) { cx.fillStyle = "#ffffff"; cx.fillRect(0, 0, finalW, finalH); }
+                cx.drawImage(image as any, 0, 0, finalW, finalH);
                 image.close?.();
                 const optimized = await new Promise<Blob | null>(r => cvs.toBlob(r, outputMime, quality / 100));
                 if (optimized) {
                   console.log(`[Optimizer] Success: ImageDecoder (${mime}) for ${img.file.name}`);
                   return {
-                    ...img, preview: previewUrl || img.preview,
+                    ...img,
+                    preview: previewUrl || img.preview,
                     optimized: URL.createObjectURL(optimized),
-                    optimizedSize: optimized.size, status: "done",
+                    optimizedSize: optimized.size,
+                    optimizedWidth: finalW,
+                    optimizedHeight: finalH,
+                    status: "done",
                   };
                 }
               }
@@ -563,8 +589,85 @@ export default function ImageOptimizer() {
     }
   };
 
+  const handleReoptimize = async (targetId?: string) => {
+    if (!files.length || processing) return;
+
+    const usage = consumeServiceUsage("image-optimizer");
+    if (!usage.ok) {
+      toast.error(`Image Optimizer limit reached (${usage.used}/${usage.limit})`);
+      return;
+    }
+    setProcessing(true);
+
+    const targetFiles = targetId ? files.filter((f) => f.id === targetId) : files;
+
+    const needsFFmpeg = targetFiles.some((f) => {
+      const name = f.file.name.toLowerCase();
+      return FFMPEG_REQUIRED_EXTENSIONS.some((ext) => name.endsWith(ext));
+    });
+
+    if (needsFFmpeg) {
+      toast.info("Loading conversion engine for advanced formats...");
+      try {
+        await loadFFmpeg();
+      } catch {
+        toast.error("Failed to initialize conversion engine");
+      }
+    }
+
+    const currentFiles = [...files];
+    for (let i = 0; i < currentFiles.length; i++) {
+      const f = currentFiles[i];
+      if (targetId && f.id !== targetId) continue;
+
+      if (f.optimized && f.optimized.startsWith("blob:")) {
+        URL.revokeObjectURL(f.optimized);
+      }
+
+      setFiles((prev) =>
+        prev.map((item) =>
+          item.id === f.id ? { ...item, status: "processing", errorMsg: undefined } : item
+        )
+      );
+
+      const result = await optimizeImage(f);
+
+      setFiles((prev) => prev.map((item) => (item.id === f.id ? result : item)));
+      currentFiles[i] = result;
+
+      if (result.status === "done" && result.optimizedSize) {
+        let saved = "—";
+        if (f.file.size > result.optimizedSize) {
+          saved = Math.round((1 - result.optimizedSize / f.file.size) * 100) + "%";
+        }
+        addHistoryItem({
+          name: f.file.name,
+          type: "image",
+          action: `Re-optimized to ${outputFormat.toUpperCase()} (${maxWidth === "original" ? "Original" : `${maxWidth}px`})`,
+          originalSize: f.file.size,
+          optimizedSize: result.optimizedSize,
+          saved,
+          url: result.optimized,
+        });
+      }
+    }
+
+    setProcessing(false);
+    const successCount = currentFiles.filter((f) => (targetId ? f.id === targetId : true) && f.status === "done").length;
+    if (successCount > 0) {
+      toast.success(targetId ? "Image re-optimized successfully" : `Re-optimized ${successCount} image(s)`);
+    }
+  };
+
   const handleOptimize = async () => {
-    if (!files.length) return;
+    if (!files.length || processing) return;
+
+    const hasPending = files.some((f) => f.status === "pending");
+    if (!hasPending) {
+      await handleReoptimize();
+      return;
+    }
+
     const usage = consumeServiceUsage("image-optimizer");
     if (!usage.ok) {
       toast.error(`Image Optimizer limit reached (${usage.used}/${usage.limit})`);
@@ -573,7 +676,7 @@ export default function ImageOptimizer() {
     setProcessing(true);
 
     // Check if any non-native formats are present and load FFmpeg if needed
-    const needsFFmpeg = files.some(f => {
+    const needsFFmpeg = files.some((f) => {
       const name = f.file.name.toLowerCase();
       return FFMPEG_REQUIRED_EXTENSIONS.some((ext) => name.endsWith(ext));
     });
@@ -592,11 +695,11 @@ export default function ImageOptimizer() {
       const f = currentFiles[i];
       if (f.status === "done" || f.status === "error") continue;
 
-      setFiles(prev => prev.map(item => item.id === f.id ? { ...item, status: "processing" } : item));
+      setFiles((prev) => prev.map((item) => (item.id === f.id ? { ...item, status: "processing" } : item)));
 
       const result = await optimizeImage(f);
 
-      setFiles(prev => prev.map(item => item.id === f.id ? result : item));
+      setFiles((prev) => prev.map((item) => (item.id === f.id ? result : item)));
       currentFiles[i] = result;
       await cleanupSupabaseSource(f);
 
@@ -608,7 +711,7 @@ export default function ImageOptimizer() {
         addHistoryItem({
           name: f.file.name,
           type: "image",
-          action: `Converted to ${outputFormat.toUpperCase()}`,
+          action: `Converted to ${outputFormat.toUpperCase()} (${maxWidth === "original" ? "Original" : `${maxWidth}px`})`,
           originalSize: f.file.size,
           optimizedSize: result.optimizedSize,
           saved,
@@ -617,7 +720,7 @@ export default function ImageOptimizer() {
       }
     }
     setProcessing(false);
-    const successCount = currentFiles.filter(f => f.status === "done").length;
+    const successCount = currentFiles.filter((f) => f.status === "done").length;
     if (successCount > 0) {
       toast.success(`Optimized ${successCount} image(s)`);
     }
@@ -713,30 +816,88 @@ export default function ImageOptimizer() {
               </div>
             </div>
 
-            <Button
-              onClick={handleOptimize}
-              disabled={!files.some(f => f.status === "pending") || processing}
-              className="w-full gradient-primary text-primary-foreground border-0"
-            >
-              {processing ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Processing…
-                </>
-              ) : (
-                <>
-                  Optimize All
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </>
-              )}
-            </Button>
+            <div>
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-card-foreground">
+                  Resolution / Width
+                </label>
+                <span className="text-xs text-muted-foreground font-mono">
+                  {maxWidth === "original" ? "Original" : `${maxWidth}px`}
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5 mt-2">
+                {[
+                  { label: "Original", value: "original" },
+                  { label: "2560px", value: 2560 },
+                  { label: "1920px", value: 1920 },
+                  { label: "1000px", value: 1000 },
+                  { label: "500px", value: 500 },
+                  { label: "250px", value: 250 },
+                ].map((res) => (
+                  <button
+                    key={res.label}
+                    type="button"
+                    onClick={() => setMaxWidth(res.value as number | "original")}
+                    className={`px-2 py-1.5 rounded-md text-xs font-medium transition-colors border ${
+                      maxWidth === res.value
+                        ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                        : "bg-secondary text-secondary-foreground border-border/60 hover:bg-secondary/80"
+                    }`}
+                  >
+                    {res.label}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-            {doneFiles.length > 1 && (
-              <Button variant="outline" onClick={downloadAll} className="w-full">
-                <Package className="mr-2 h-4 w-4" />
-                Download ZIP
+            <div className="space-y-2 pt-1">
+              <Button
+                onClick={handleOptimize}
+                disabled={!files.length || processing}
+                className="w-full gradient-primary text-primary-foreground border-0"
+              >
+                {processing ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Processing…
+                  </>
+                ) : (
+                  <>
+                    Optimize All
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </>
+                )}
               </Button>
-            )}
+
+              {files.some(f => f.status === "done" || f.status === "error") && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => handleReoptimize()}
+                  disabled={processing}
+                  className="w-full border-primary/40 hover:bg-primary/10 text-primary font-medium"
+                >
+                  {processing ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Re-optimizing…
+                    </>
+                  ) : (
+                    <>
+                      <RotateCcw className="mr-2 h-4 w-4" />
+                      Re-optimize All
+                    </>
+                  )}
+                </Button>
+              )}
+
+              {doneFiles.length > 1 && (
+                <Button variant="outline" onClick={downloadAll} className="w-full">
+                  <Package className="mr-2 h-4 w-4" />
+                  Download ZIP
+                </Button>
+              )}
+            </div>
           </div>
 
           <div className="rounded-xl border border-border bg-card p-4 shadow-card">
@@ -812,6 +973,11 @@ export default function ImageOptimizer() {
                               <span className="text-green-500">
                                 (−{Math.round((1 - f.optimizedSize / f.file.size) * 100)}%)
                               </span>
+                              {f.optimizedWidth && f.optimizedHeight ? (
+                                <span className="text-muted-foreground ml-1 font-mono text-[11px]">
+                                  ({f.optimizedWidth}×{f.optimizedHeight}px)
+                                </span>
+                              ) : null}
                             </>
                           )}
                         </>
@@ -825,9 +991,20 @@ export default function ImageOptimizer() {
                   </div>
                   <div className="flex items-center gap-1.5">
                     {f.status === "done" && f.optimized && (
-                      <Button size="icon" variant="ghost" onClick={() => downloadSingle(f)}>
-                        <Download className="h-4 w-4" />
-                      </Button>
+                      <>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          title="Re-optimize with current settings"
+                          disabled={processing}
+                          onClick={() => handleReoptimize(f.id)}
+                        >
+                          <RotateCcw className="h-4 w-4 text-muted-foreground hover:text-foreground" />
+                        </Button>
+                        <Button size="icon" variant="ghost" onClick={() => downloadSingle(f)}>
+                          <Download className="h-4 w-4" />
+                        </Button>
+                      </>
                     )}
                     {f.status === "done" ? (
                       <CheckCircle2 className="h-5 w-5 text-green-500" />
