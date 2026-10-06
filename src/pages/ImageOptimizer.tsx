@@ -686,10 +686,7 @@ export default function ImageOptimizer() {
     if (!files.length || processing) return;
 
     const hasPending = files.some((f) => f.status === "pending");
-    if (!hasPending) {
-      await handleReoptimize();
-      return;
-    }
+    if (!hasPending) return;
 
     const usage = consumeServiceUsage("image-optimizer");
     if (!usage.ok) {
@@ -886,8 +883,8 @@ export default function ImageOptimizer() {
             <div className="space-y-2 pt-1">
               <Button
                 onClick={handleOptimize}
-                disabled={!files.length || processing}
-                className="w-full gradient-primary text-primary-foreground border-0"
+                disabled={!files.some((f) => f.status === "pending") || processing}
+                className="w-full gradient-primary text-primary-foreground border-0 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {processing ? (
                   <>
@@ -902,12 +899,12 @@ export default function ImageOptimizer() {
                 )}
               </Button>
 
-              {files.some(f => f.status === "done" || f.status === "error") && (
+              {files.some((f) => f.status === "done" || f.status === "error") && (
                 <Button
                   type="button"
                   onClick={() => handleReoptimize()}
                   disabled={processing}
-                  className="w-full bg-secondary text-foreground hover:bg-primary hover:text-white border border-border/80 font-semibold transition-colors shadow-sm"
+                  className="w-full bg-primary/10 hover:bg-primary text-primary hover:text-white border border-primary/30 font-semibold transition-all shadow-sm"
                 >
                   {processing ? (
                     <>
@@ -916,7 +913,7 @@ export default function ImageOptimizer() {
                     </>
                   ) : (
                     <>
-                      <RotateCcw className="mr-2 h-4 w-4 text-primary group-hover:text-white" />
+                      <RotateCcw className="mr-2 h-4 w-4 transition-colors" />
                       Re-optimize All
                     </>
                   )}
