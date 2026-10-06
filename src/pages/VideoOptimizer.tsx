@@ -1,9 +1,26 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile, toBlobURL } from "@ffmpeg/util";
 import { motion, AnimatePresence } from "framer-motion";
-import { Video, Download, Trash2, ArrowRight, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
+import {
+  Video,
+  Download,
+  Trash2,
+  ArrowRight,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  RotateCcw,
+  Package,
+  HardDrive,
+  Play,
+  Film,
+  Zap,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
+import JSZip from "jszip";
+import { saveAs } from "file-saver";
 import { DropZone } from "@/components/DropZone";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -14,41 +31,80 @@ import { consumeDownloadUsage, consumeServiceUsage } from "@/lib/memberLimits";
 type CompressionMode = "low" | "medium" | "high";
 type ResolutionMode = "original" | "1080p" | "720p" | "480p" | "360p";
 type OutputFormat = "mp4" | "webm";
-type EngineMode = "single";
 
 interface VideoMetadata {
   width: number;
   height: number;
   duration: number;
   sourceBitrateKbps: number;
+  thumbnail: string;
 }
 
 interface VideoFile {
   id: string;
   file: File;
   status: "pending" | "processing" | "done" | "error";
+  thumbnail?: string;
+  width?: number;
+  height?: number;
+  duration?: number;
   outputUrl?: string;
   outputSize?: number;
+  outputWidth?: number;
+  outputHeight?: number;
   progress?: number;
   errorMsg?: string;
   outputFormat?: OutputFormat;
 }
 
 const FFMPEG_CORE_BASE_ST = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm";
+const FFMPEG_CACHE_NAME = "ffmpeg-wasm-core-v0.12.6";
+
+// Cache FFmpeg core WASM and JS in browser Cache API on user's PC for instant 0ms loads
+async function getCachedBlobUrl(url: string, mimeType: string): Promise<string> {
+  if (typeof window !== "undefined" && "caches" in window) {
+    try {
+      const cache = await window.caches.open(FFMPEG_CACHE_NAME);
+      const cached = await cache.match(url);
+      if (cached) {
+        console.log(`[FFmpeg Cache] Loaded from PC cache: ${url}`);
+        const blob = await cached.blob();
+        return URL.createObjectURL(blob);
+      }
+      console.log(`[FFmpeg Cache] Downloading & saving to PC cache: ${url}`);
+      const res = await fetch(url);
+      if (res.ok) {
+        await cache.put(url, res.clone());
+        const blob = await res.blob();
+        return URL.createObjectURL(blob);
+      }
+    } catch (e) {
+      console.warn("[FFmpeg Cache] Browser Cache API failed, falling back to network:", e);
+    }
+  }
+  return toBlobURL(url, mimeType);
+}
 
 const formatSize = (bytes: number) => {
   if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1048576).toFixed(2)} MB`;
 };
 
+const formatDuration = (seconds: number) => {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s < 10 ? "0" : ""}${s}`;
+};
+
 const even = (value: number) => Math.max(2, Math.round(value / 2) * 2);
 
-const getVideoMetadata = (file: File): Promise<VideoMetadata> =>
-  new Promise((resolve, reject) => {
+const getVideoMetadataAndThumbnail = (file: File): Promise<VideoMetadata> =>
+  new Promise((resolve) => {
     const url = URL.createObjectURL(file);
     const video = document.createElement("video");
     video.preload = "metadata";
     video.muted = true;
+    video.playsInline = true;
 
     const cleanup = () => {
       URL.revokeObjectURL(url);
@@ -57,28 +113,57 @@ const getVideoMetadata = (file: File): Promise<VideoMetadata> =>
     };
 
     video.onloadedmetadata = () => {
+      const seekTime = Math.min(1, video.duration > 2 ? 0.8 : video.duration * 0.2);
+      video.currentTime = seekTime;
+    };
+
+    video.onseeked = () => {
+      let thumbnail = "";
+      try {
+        const canvas = document.createElement("canvas");
+        const w = Math.min(320, video.videoWidth || 320);
+        const ratio = w / (video.videoWidth || 320);
+        const h = Math.max(1, Math.round((video.videoHeight || 180) * ratio));
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(video, 0, 0, w, h);
+          thumbnail = canvas.toDataURL("image/jpeg", 0.7);
+        }
+      } catch {
+        // Ignore canvas export errors
+      }
+
       const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 1;
       const sourceBitrateKbps = Math.max(250, Math.round((file.size * 8) / duration / 1000));
-      const metadata: VideoMetadata = {
+      const meta: VideoMetadata = {
         width: video.videoWidth || 1920,
         height: video.videoHeight || 1080,
         duration,
         sourceBitrateKbps,
+        thumbnail,
       };
       cleanup();
-      resolve(metadata);
+      resolve(meta);
     };
 
     video.onerror = () => {
       cleanup();
-      reject(new Error("Could not read video metadata"));
+      resolve({
+        width: 1920,
+        height: 1080,
+        duration: 1,
+        sourceBitrateKbps: Math.round((file.size * 8) / 1000),
+        thumbnail: "",
+      });
     };
 
     video.src = url;
   });
 
 const getTargetDimensions = (
-  metadata: VideoMetadata,
+  metadata: { width: number; height: number },
   resolution: ResolutionMode,
 ): { width: number; height: number } => {
   if (resolution === "original") {
@@ -117,88 +202,6 @@ const getTargetDimensions = (
   };
 };
 
-const getResolutionFloorKbps = (dimensions: { width: number; height: number }, compression: CompressionMode) => {
-  const pixels = dimensions.width * dimensions.height;
-  if (pixels >= 1920 * 1080) {
-    return compression === "high" ? 850 : compression === "medium" ? 1200 : 2000;
-  }
-  if (pixels >= 1280 * 720) {
-    return compression === "high" ? 600 : compression === "medium" ? 900 : 1400;
-  }
-  if (pixels >= 854 * 480) {
-    return compression === "high" ? 380 : compression === "medium" ? 600 : 900;
-  }
-  return compression === "high" ? 260 : compression === "medium" ? 420 : 650;
-};
-
-const getTargetVideoBitrate = ({
-  metadata,
-  compression,
-  resolution,
-  outputFormat,
-  audioBitrateKbps,
-}: {
-  metadata: VideoMetadata;
-  compression: CompressionMode;
-  resolution: ResolutionMode;
-  outputFormat: OutputFormat;
-  audioBitrateKbps: number;
-}) => {
-  const targetDimensions = getTargetDimensions(metadata, resolution);
-  const scaleFactor = Math.min(
-    1,
-    (targetDimensions.width * targetDimensions.height) / Math.max(1, metadata.width * metadata.height),
-  );
-
-  const sourceVideoBitrate = Math.max(250, metadata.sourceBitrateKbps - audioBitrateKbps);
-  const ratioMatrix: Record<OutputFormat, Record<CompressionMode, number>> = {
-    mp4: {
-      low: 0.5,
-      medium: 0.22,
-      high: 0.14,
-    },
-    webm: {
-      low: 0.45,
-      medium: 0.2,
-      high: 0.12,
-    },
-  };
-
-  const scaledRatio = ratioMatrix[outputFormat][compression] * Math.sqrt(scaleFactor);
-  const floor = getResolutionFloorKbps(targetDimensions, compression);
-  const target = Math.max(floor, Math.round(sourceVideoBitrate * scaledRatio));
-
-  return {
-    targetDimensions,
-    targetBitrateKbps: target,
-    maxRateKbps: Math.round(target * 1.15),
-    bufferSizeKbps: Math.round(target * 2),
-  };
-};
-
-const getExecTimeoutMs = (metadata: VideoMetadata, fileSize: number, compression: CompressionMode = "medium") => {
-  // Fast encoding - much shorter timeouts now
-  const presetMultiplier: Record<CompressionMode, number> = {
-    low: 0.8,
-    medium: 1.2,
-    high: 1.8,
-  };
-  
-  const multiplier = presetMultiplier[compression];
-  const baseTimeout = 180000; // 3 minutes minimum
-  const durationBased = metadata.duration * 1500 * multiplier; // 1.5 seconds per second of video × preset multiplier
-  const sizeBased = (fileSize / 2000) * multiplier; // 0.5 second per MB × preset multiplier
-  
-  const totalTimeout = baseTimeout + durationBased + sizeBased;
-  console.log(`Timeout calculation: base=${baseTimeout/1000}s, duration=${durationBased/1000}s, size=${sizeBased/1000}s, preset=${compression}×${multiplier}, total=${totalTimeout/1000}s`);
-  
-  // Max 15 minutes for large videos
-  return Math.round(Math.min(900000, totalTimeout));
-};
-
-const getStallTimeoutMs = (metadata: VideoMetadata) =>
-  Math.round(Math.max(30000, Math.min(90000, metadata.duration * 1500)));
-
 const buildEncodeArgs = ({
   inputName,
   outputName,
@@ -211,18 +214,14 @@ const buildEncodeArgs = ({
   inputName: string;
   outputName: string;
   outputFormat: OutputFormat;
-  metadata: VideoMetadata;
+  metadata: { width: number; height: number; duration: number };
   compression: CompressionMode;
   resolution: ResolutionMode;
   audioBitrateKbps: number;
 }) => {
-  const { targetDimensions, targetBitrateKbps, maxRateKbps, bufferSizeKbps } = getTargetVideoBitrate({
-    metadata,
-    compression,
-    resolution,
-    outputFormat,
-    audioBitrateKbps,
-  });
+  const targetDimensions = getTargetDimensions(metadata, resolution);
+  const w = even(targetDimensions.width);
+  const h = even(targetDimensions.height);
 
   const args = [
     "-i",
@@ -234,27 +233,26 @@ const buildEncodeArgs = ({
     "-sn",
     "-dn",
     "-threads",
-    "1",
+    "0",
   ];
 
-  if (resolution !== "original" && (targetDimensions.width !== metadata.width || targetDimensions.height !== metadata.height)) {
-    args.push("-vf", `scale=${targetDimensions.width}:${targetDimensions.height}`);
+  // Scale if requested or ensure even dimensions (divisible by 2) for H.264 & VP8
+  if (resolution !== "original" || metadata.width % 2 !== 0 || metadata.height % 2 !== 0) {
+    args.push("-vf", `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2`);
   }
 
   if (outputFormat === "mp4") {
-    // Fast encoding with good compression
-    // Use faster presets for speed, but still achieve 70-85% compression
+    // Ultra-fast x264 WebAssembly presets
     const presetByCompression: Record<CompressionMode, string> = {
       low: "ultrafast",
-      medium: "veryfast",
-      high: "fast",
+      medium: "superfast",
+      high: "veryfast",
     };
 
-    // CRF values - balanced quality/speed
     const crfByCompression: Record<CompressionMode, string> = {
-      low: "30",
-      medium: "34",
-      high: "38",
+      low: "26",
+      medium: "30",
+      high: "34",
     };
 
     args.push(
@@ -269,46 +267,38 @@ const buildEncodeArgs = ({
       "-c:a",
       "aac",
       "-b:a",
-      compression === "high" ? "48k" : "64k",
-      "-ac",
-      compression === "high" ? "1" : "2",
-      "-ar",
-      "22050",
+      `${Math.min(audioBitrateKbps, 128)}k`,
       "-movflags",
       "+faststart",
-      "-tune",
-      "fastdecode",
     );
   } else {
-    // Use realtime mode with maximum speed settings
+    // WebM format with VP8 & Opus
+    // In libvpx, -b:v 0 is required with -crf to avoid falling back to low 200k CBR!
+    const crfByCompression: Record<CompressionMode, string> = {
+      low: "30",
+      medium: "36",
+      high: "42",
+    };
+
     args.push(
       "-c:v",
       "libvpx",
+      "-b:v",
+      "0",
+      "-crf",
+      crfByCompression[compression],
       "-deadline",
       "realtime",
-      "-cpu-used",
-      "8", // Maximum speed
-      "-crf",
-      "40", // Much higher = much faster
-      "-qmin",
-      "30",
-      "-qmax",
-      "63",
+      "-speed",
+      "8",
       "-c:a",
-      "libvorbis",
+      "libopus",
       "-b:a",
-      "48k", // Minimal audio
-      "-ac",
-      "1", // Mono
-      "-ar",
-      "22050", // Lower sample rate
+      `${Math.min(audioBitrateKbps, 96)}k`,
     );
   }
 
-  console.log(`Encoding with ${outputFormat} format using MAXIMUM speed settings`);
-
   args.push("-y", outputName);
-
   return args;
 };
 
@@ -321,16 +311,24 @@ export default function VideoOptimizer() {
   const [audioBitrate, setAudioBitrate] = useState("128");
   const [processing, setProcessing] = useState(false);
   const [globalProgress, setGlobalProgress] = useState(0);
+  const [engineCached, setEngineCached] = useState(false);
+  const [previewModalUrl, setPreviewModalUrl] = useState<string | null>(null);
+
   const ffmpegRef = useRef<FFmpeg | null>(null);
-  const ffmpegModeRef = useRef<EngineMode | null>(null);
   const currentFileIdRef = useRef<string | null>(null);
   const completedRef = useRef(0);
   const pendingCountRef = useRef(1);
   const currentDurationRef = useRef(0);
-  const fallbackTimerRef = useRef<number | null>(null);
   const currentFileProgressRef = useRef(0);
   const lastActivityRef = useRef(Date.now());
-  const execWatchdogRef = useRef<number | null>(null);
+  const fallbackTimerRef = useRef<number | null>(null);
+
+  // Check if engine is cached on user's PC on mount
+  useEffect(() => {
+    if (typeof window !== "undefined" && "caches" in window) {
+      void window.caches.has(FFMPEG_CACHE_NAME).then((has) => setEngineCached(has));
+    }
+  }, []);
 
   const updateFile = (id: string, patch: Partial<VideoFile>) => {
     setFiles((prev) => prev.map((file) => (file.id === id ? { ...file, ...patch } : file)));
@@ -343,13 +341,6 @@ export default function VideoOptimizer() {
     }
   };
 
-  const stopExecWatchdog = () => {
-    if (execWatchdogRef.current !== null) {
-      window.clearInterval(execWatchdogRef.current);
-      execWatchdogRef.current = null;
-    }
-  };
-
   const markActivity = () => {
     lastActivityRef.current = Date.now();
   };
@@ -358,11 +349,10 @@ export default function VideoOptimizer() {
     const currentId = currentFileIdRef.current;
     if (!currentId) return;
 
-    // Allow reaching 100% when explicitly set
-    const bounded = progressValue === 100 
-      ? 100 
+    const bounded = progressValue === 100
+      ? 100
       : Math.max(currentFileProgressRef.current, Math.min(99, Math.round(progressValue)));
-    
+
     if (bounded > currentFileProgressRef.current || progressValue === 100) {
       markActivity();
     }
@@ -382,33 +372,31 @@ export default function VideoOptimizer() {
       if (currentFileIdRef.current === null) return;
       if (currentFileProgressRef.current >= maxAt) return;
       applyProgress(Math.min(maxAt, currentFileProgressRef.current + 1));
-    }, 1200);
+    }, 1000);
     applyProgress(startAt);
   };
 
   const resetFFmpeg = () => {
-    stopExecWatchdog();
     stopFallbackProgress();
     try {
       ffmpegRef.current?.terminate();
     } catch {
-      // Ignore reset errors.
+      // Ignore
     }
     ffmpegRef.current = null;
-    ffmpegModeRef.current = null;
   };
 
   const loadFFmpeg = async (): Promise<FFmpeg> => {
-    // Always create a fresh instance to avoid state issues
-    resetFFmpeg();
+    // Reuse loaded FFmpeg instance across files - avoids 31MB re-download & instant execution
+    if (ffmpegRef.current && ffmpegRef.current.loaded) {
+      return ffmpegRef.current;
+    }
 
+    resetFFmpeg();
     const ffmpeg = new FFmpeg();
-    
-    // Enhanced log handler with better progress detection
+
     const logHandler = ({ message }: { message: string }) => {
       markActivity();
-      
-      // Parse time information from FFmpeg logs for real progress
       const timeMatch = message.match(/time=(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)/);
       if (timeMatch && currentDurationRef.current > 0) {
         const [, hours, minutes, seconds] = timeMatch;
@@ -417,50 +405,50 @@ export default function VideoOptimizer() {
           Number.parseInt(minutes, 10) * 60 +
           Number.parseFloat(seconds);
         const encodeRatio = Math.min(0.99, elapsedSeconds / currentDurationRef.current);
-        const encodePercent = 15 + encodeRatio * 84; // 15% to 99%
+        const encodePercent = 10 + encodeRatio * 88; // 10% to 98%
         applyProgress(encodePercent);
-        return;
-      }
-
-      // Detect frame information for additional progress updates
-      const frameMatch = message.match(/frame=\s*(\d+)/);
-      if (frameMatch && currentDurationRef.current > 0) {
-        markActivity();
       }
     };
 
-    // Progress handler for real-time updates
     const progressHandler = ({ progress }: { progress: number }) => {
       markActivity();
-      const encodePercent = 15 + progress * 84; // 15% to 99%
+      const encodePercent = 10 + progress * 88;
       applyProgress(encodePercent);
     };
 
     ffmpeg.on("log", logHandler);
     ffmpeg.on("progress", progressHandler);
 
-    await ffmpeg.load({
-      coreURL: await toBlobURL(`${FFMPEG_CORE_BASE_ST}/ffmpeg-core.js`, "text/javascript"),
-      wasmURL: await toBlobURL(`${FFMPEG_CORE_BASE_ST}/ffmpeg-core.wasm`, "application/wasm"),
-    });
-    ffmpegModeRef.current = "single";
+    // Parallel load using local PC cache
+    const [coreURL, wasmURL] = await Promise.all([
+      getCachedBlobUrl(`${FFMPEG_CORE_BASE_ST}/ffmpeg-core.js`, "text/javascript"),
+      getCachedBlobUrl(`${FFMPEG_CORE_BASE_ST}/ffmpeg-core.wasm`, "application/wasm"),
+    ]);
 
+    await ffmpeg.load({ coreURL, wasmURL });
+    setEngineCached(true);
     ffmpegRef.current = ffmpeg;
     return ffmpeg;
   };
 
   const runEncode = async (
-    ffmpeg: FFmpeg, 
-    args: string[], 
-    metadata: VideoMetadata, 
-    fileSize: number,
-    compression: CompressionMode = "medium"
+    ffmpeg: FFmpeg,
+    args: string[],
+    duration: number,
+    opts: {
+      inputName: string;
+      outputName: string;
+      outputFormat: OutputFormat;
+      metadata: { width: number; height: number; duration: number };
+      compression: CompressionMode;
+      resolution: ResolutionMode;
+      audioBitrateKbps: number;
+    }
   ) => {
     return new Promise<void>((resolve, reject) => {
-      const execTimeoutMs = getExecTimeoutMs(metadata, fileSize, compression);
+      const execTimeoutMs = Math.max(120000, duration * 3000); // 3 seconds per second of video
       let completed = false;
       let timeoutId: number | null = null;
-      let execPromise: Promise<number> | null = null;
 
       const cleanup = () => {
         if (timeoutId !== null) {
@@ -469,84 +457,100 @@ export default function VideoOptimizer() {
         }
       };
 
-      const finish = (error?: Error) => {
-        if (completed) return;
-        completed = true;
-        cleanup();
-        if (error) {
-          reject(error);
-        } else {
-          resolve();
-        }
-      };
-
-      // Set a very generous timeout - encoding can take a long time in browser
       timeoutId = window.setTimeout(() => {
         if (!completed) {
-          finish(new Error("Video encoding timed out after " + Math.round(execTimeoutMs/1000) + " seconds"));
+          completed = true;
+          cleanup();
+          reject(new Error(`Encoding timed out after ${Math.round(execTimeoutMs / 1000)}s`));
         }
       }, execTimeoutMs);
 
-      console.log(`Starting FFmpeg encoding with ${args.length} args, timeout: ${Math.round(execTimeoutMs/1000)}s`);
+      console.log(`[FFmpeg] Executing args:`, args.join(" "));
 
-      // Execute the encoding with proper error handling
-      try {
-        execPromise = ffmpeg.exec(args);
-
-        execPromise
-          .then((exitCode) => {
-            console.log(`FFmpeg exec completed with exit code: ${exitCode}`);
-            if (!completed) {
-              if (exitCode === 0) {
-                finish();
-              } else {
-                finish(new Error(`FFmpeg exited with code ${exitCode}`));
+      ffmpeg
+        .exec(args)
+        .then(async (exitCode) => {
+          if (completed) return;
+          if (exitCode === 0) {
+            completed = true;
+            cleanup();
+            resolve();
+          } else {
+            // WebM fallback attempt (try without audio if audio encoder had an issue)
+            if (opts.outputFormat === "webm") {
+              try {
+                console.warn("[FFmpeg] WebM encoding retry without audio stream...");
+                const noAudioArgs = [
+                  "-i", opts.inputName,
+                  "-map", "0:v:0",
+                  "-an",
+                  "-c:v", "libvpx",
+                  "-b:v", "0",
+                  "-crf", "36",
+                  "-deadline", "realtime",
+                  "-speed", "8",
+                  "-y", opts.outputName
+                ];
+                const retryCode = await ffmpeg.exec(noAudioArgs);
+                if (retryCode === 0) {
+                  completed = true;
+                  cleanup();
+                  resolve();
+                  return;
+                }
+              } catch (retryErr) {
+                console.error("[FFmpeg] Retry failed:", retryErr);
               }
             }
-          })
-          .catch((error) => {
-            console.error("FFmpeg exec error:", error);
-            if (!completed) {
-              finish(error instanceof Error ? error : new Error(String(error)));
-            }
-          });
-      } catch (error) {
-        console.error("FFmpeg exec threw immediately:", error);
-        if (!completed) {
-          finish(error instanceof Error ? error : new Error(String(error)));
-        }
-      }
+            completed = true;
+            cleanup();
+            reject(new Error(`FFmpeg exited with error code ${exitCode}`));
+          }
+        })
+        .catch((error) => {
+          if (!completed) {
+            completed = true;
+            cleanup();
+            reject(error instanceof Error ? error : new Error(String(error)));
+          }
+        });
     });
   };
 
-  const handleFiles = (newFiles: File[]) => {
+  const handleFiles = async (newFiles: File[]) => {
     const videos = newFiles.filter(
       (file) =>
-        ["video/mp4", "video/quicktime", "video/webm", "video/x-msvideo", "video/avi"].includes(file.type) ||
+        ["video/mp4", "video/quicktime", "video/webm", "video/x-msvideo", "video/avi", "video/mkv"].includes(file.type) ||
         /\.(mp4|mov|webm|avi|mkv)$/i.test(file.name),
     );
 
     if (!videos.length) {
-      toast.error("Please upload MP4, MOV, WebM, or AVI files only");
+      toast.error("Please upload MP4, MOV, WebM, AVI, or MKV files only");
       return;
     }
 
-    setFiles((prev) => [
-      ...prev,
-      ...videos.map((file) => ({
-        id: crypto.randomUUID(),
-        file,
-        status: "pending" as const,
-      })),
-    ]);
+    const mapped: VideoFile[] = await Promise.all(
+      videos.map(async (file) => {
+        const id = crypto.randomUUID();
+        const meta = await getVideoMetadataAndThumbnail(file);
+        return {
+          id,
+          file,
+          status: "pending" as const,
+          thumbnail: meta.thumbnail,
+          width: meta.width,
+          height: meta.height,
+          duration: meta.duration,
+        };
+      })
+    );
+
+    setFiles((prev) => [...prev, ...mapped]);
+    toast.success(`${mapped.length} video(s) loaded & cached locally on your PC`);
   };
 
-  const handleOptimize = async () => {
-    const pendingFiles = files.filter((file) => file.status === "pending");
-    if (!pendingFiles.length) {
-      toast.warning("No pending files to process");
-      return;
-    }
+  const runBatchOptimization = async (targetFiles: VideoFile[]) => {
+    if (!targetFiles.length || processing) return;
 
     const usage = consumeServiceUsage("video-optimizer");
     if (!usage.ok) {
@@ -557,93 +561,69 @@ export default function VideoOptimizer() {
     setProcessing(true);
     setGlobalProgress(0);
     completedRef.current = 0;
-    pendingCountRef.current = pendingFiles.length;
-    pendingFiles.forEach((file) => updateFile(file.id, { status: "processing", progress: 0, errorMsg: undefined }));
+    pendingCountRef.current = targetFiles.length;
+
+    targetFiles.forEach((f) => updateFile(f.id, { status: "processing", progress: 0, errorMsg: undefined }));
 
     const selectedAudioBitrate = Number.parseInt(audioBitrate, 10) || 128;
 
-    console.log(`Starting video optimization for ${pendingFiles.length} file(s)`);
-
-    for (const fileObj of pendingFiles) {
-      const ext = fileObj.file.name.split(".").pop() || "mp4";
-      const inputName = `in_${fileObj.id}.${ext}`;
-      const outputName = `out_${fileObj.id}.${outputFormat}`;
+    for (const fileObj of targetFiles) {
+      const ext = fileObj.file.name.split(".").pop()?.toLowerCase() || "mp4";
+      const inputName = `in_${fileObj.id.slice(0, 8)}.${ext}`;
+      const outputName = `out_${fileObj.id.slice(0, 8)}.${outputFormat}`;
       currentFileIdRef.current = fileObj.id;
       currentFileProgressRef.current = 0;
-      currentDurationRef.current = 0;
+      currentDurationRef.current = fileObj.duration || 10;
+
+      // Revoke old output url if re-optimizing
+      if (fileObj.outputUrl && fileObj.outputUrl.startsWith("blob:")) {
+        URL.revokeObjectURL(fileObj.outputUrl);
+      }
 
       try {
         applyProgress(2);
-        const metadata = await getVideoMetadata(fileObj.file);
-        currentDurationRef.current = metadata.duration;
-        applyProgress(6);
-        
-        // Use fresh FFmpeg instance for reliable encoding
         const ffmpeg = await loadFFmpeg();
-        
-        // Try MP4 first as it's more reliable, then WebM if needed
-        const primaryFormat = outputFormat;
-        const args = buildEncodeArgs({
+        applyProgress(8);
+
+        const targetDims = getTargetDimensions(
+          { width: fileObj.width || 1920, height: fileObj.height || 1080 },
+          resolution
+        );
+
+        const encodeOpts = {
           inputName,
           outputName,
-          outputFormat: primaryFormat,
-          metadata,
+          outputFormat,
+          metadata: {
+            width: fileObj.width || 1920,
+            height: fileObj.height || 1080,
+            duration: fileObj.duration || 10,
+          },
           compression,
           resolution,
           audioBitrateKbps: selectedAudioBitrate,
-        });
+        };
 
-        startFallbackProgress(8, 14);
+        const args = buildEncodeArgs(encodeOpts);
+
+        startFallbackProgress(8, 12);
         await ffmpeg.writeFile(inputName, await fetchFile(fileObj.file));
-        applyProgress(14);
-        
-        console.log(`FFmpeg args:`, args.join(' '));
-        
-        // Small delay to ensure file is written properly
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-        toast.info(`Encoding ${fileObj.file.name}... This may take a while.`);
-
-        // Stop fallback progress and let real encoding progress take over
         stopFallbackProgress();
-        
-        // Set progress to 15% to start encoding
-        applyProgress(15);
+        applyProgress(12);
 
-        await runEncode(ffmpeg, args, metadata, fileObj.file.size, compression);
+        toast.info(`Optimizing ${fileObj.file.name} to ${outputFormat.toUpperCase()}...`);
 
-        // Encoding completed successfully
-        applyProgress(100);
+        await runEncode(ffmpeg, args, fileObj.duration || 10, encodeOpts);
 
-        console.log(`Encoding completed, reading output file...`);
+        applyProgress(99);
 
-        // Check if output file exists with timeout
-        let data: Awaited<ReturnType<FFmpeg["readFile"]>> | null = null;
-        try {
-          // Add timeout for file read operation
-          const readPromise = ffmpeg.readFile(outputName);
-          const timeoutPromise = new Promise<never>((_, reject) => 
-            setTimeout(() => reject(new Error("File read timeout")), 60000)
-          );
-          
-          data = await Promise.race([readPromise, timeoutPromise]);
-          
-          if (!data) {
-            throw new Error("Output file data is null");
-          }
-          const dataSize = (data as ArrayBuffer).byteLength;
-          console.log(`Output file size: ${dataSize} bytes`);
-          if (dataSize === 0) {
-            throw new Error("Output file is empty - encoding may have failed");
-          }
-        } catch (readError) {
-          console.error("Failed to read output file:", readError);
-          throw new Error("Failed to read encoded output - encoding may have failed");
+        const data = await ffmpeg.readFile(outputName);
+        if (!data || (data as ArrayBuffer).byteLength === 0) {
+          throw new Error("Output video is empty or encoding failed");
         }
 
-        const blob = new Blob([new Uint8Array(data as ArrayBuffer)], {
-          type: primaryFormat === "webm" ? "video/webm" : "video/mp4",
-        });
+        const mime = outputFormat === "webm" ? "video/webm" : "video/mp4";
+        const blob = new Blob([new Uint8Array(data as ArrayBuffer)], { type: mime });
         const url = URL.createObjectURL(blob);
         const saving = Math.max(0, Math.round((1 - blob.size / fileObj.file.size) * 100));
 
@@ -651,24 +631,25 @@ export default function VideoOptimizer() {
           status: "done",
           outputUrl: url,
           outputSize: blob.size,
+          outputWidth: targetDims.width,
+          outputHeight: targetDims.height,
           progress: 100,
-          outputFormat: primaryFormat,
+          outputFormat,
         });
 
         addHistoryItem({
           name: fileObj.file.name,
           type: "video",
-          action: `Compressed -> ${resolution} ${outputFormat.toUpperCase()}`,
+          action: `Compressed to ${resolution} ${outputFormat.toUpperCase()}`,
           originalSize: fileObj.file.size,
           optimizedSize: blob.size,
           saved: `${saving}%`,
           url,
         });
 
-        toast.success(`${fileObj.file.name} optimized successfully! Saved ${saving}%`);
+        toast.success(`${fileObj.file.name} optimized! Saved ${saving}%`);
       } catch (error) {
         stopFallbackProgress();
-        stopExecWatchdog();
         console.error("Video optimization failed:", error);
         updateFile(fileObj.id, {
           status: "error",
@@ -678,14 +659,10 @@ export default function VideoOptimizer() {
       } finally {
         try {
           await ffmpegRef.current?.deleteFile(inputName);
-        } catch {
-          // Ignore cleanup errors.
-        }
+        } catch { /* ignore */ }
         try {
           await ffmpegRef.current?.deleteFile(outputName);
-        } catch {
-          // Ignore cleanup errors.
-        }
+        } catch { /* ignore */ }
 
         completedRef.current += 1;
         currentFileIdRef.current = null;
@@ -696,72 +673,103 @@ export default function VideoOptimizer() {
       }
     }
 
-    stopExecWatchdog();
     setProcessing(false);
-    const successCount = files.filter(f => f.status === "done").length;
-    toast.success(`Video optimization complete! ${successCount} of ${pendingFiles.length} videos processed successfully`);
+  };
+
+  const handleOptimize = async () => {
+    const pendingFiles = files.filter((f) => f.status === "pending");
+    if (!pendingFiles.length) return;
+    await runBatchOptimization(pendingFiles);
+  };
+
+  const handleReoptimize = async (targetId?: string) => {
+    const targetFiles = targetId ? files.filter((f) => f.id === targetId) : files;
+    if (!targetFiles.length || processing) return;
+
+    setFiles((prev) =>
+      prev.map((f) =>
+        targetId
+          ? f.id === targetId
+            ? { ...f, status: "pending", progress: 0, errorMsg: undefined }
+            : f
+          : { ...f, status: "pending", progress: 0, errorMsg: undefined }
+      )
+    );
+
+    setTimeout(() => {
+      void runBatchOptimization(targetFiles);
+    }, 50);
   };
 
   const downloadVideo = (fileObj: VideoFile) => {
     if (!fileObj.outputUrl) return;
-
     const download = consumeDownloadUsage();
     if (!download.ok) {
       toast.error(`Download limit reached (${download.used}/${download.limit})`);
       return;
     }
-
     const anchor = document.createElement("a");
     const baseName = fileObj.file.name.replace(/\.\w+$/, "");
     anchor.href = fileObj.outputUrl;
-    anchor.download = `optimized_${baseName}.${fileObj.outputFormat || 'mp4'}`;
+    anchor.download = `optimized_${baseName}.${fileObj.outputFormat || outputFormat}`;
     anchor.click();
   };
 
+  const downloadAll = async () => {
+    const done = files.filter((f) => f.outputUrl);
+    if (!done.length) return;
+    const download = consumeDownloadUsage();
+    if (!download.ok) {
+      toast.error(`Download limit reached (${download.used}/${download.limit})`);
+      return;
+    }
+    const zip = new JSZip();
+    for (const f of done) {
+      const resp = await fetch(f.outputUrl!);
+      const blob = await resp.blob();
+      const baseName = f.file.name.replace(/\.\w+$/, "");
+      zip.file(`optimized_${baseName}.${f.outputFormat || outputFormat}`, blob);
+    }
+    const content = await zip.generateAsync({ type: "blob" });
+    saveAs(content, "optimized-videos.zip");
+  };
+
+  const doneFiles = files.filter((f) => f.status === "done");
+  const hasPending = files.some((f) => f.status === "pending");
+  const hasDoneOrError = files.some((f) => f.status === "done" || f.status === "error");
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Video Optimizer</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Compress, resize and convert videos with browser-based FFmpeg.
-        </p>
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Video Optimizer</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Compress, resize and convert videos with browser-based FFmpeg.
+          </p>
+        </div>
+
+        {/* Local PC Storage Indicator */}
+        <div className="inline-flex items-center gap-2 rounded-lg bg-primary/10 border border-primary/20 px-3 py-1.5 text-xs text-primary self-start sm:self-auto font-medium">
+          <HardDrive className="h-4 w-4 shrink-0 text-primary" />
+          <span>
+            {engineCached ? "Engine Cached on PC (0s Load)" : "Local PC Processing (100% Private)"}
+          </span>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* Settings Panel */}
         <div className="space-y-4 lg:col-span-1">
           <div className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-card">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-card-foreground">Settings</h2>
-
-            <div>
-              <label className="text-sm font-medium text-card-foreground">Compression Level</label>
-              <Select value={compression} onValueChange={(value) => setCompression(value as CompressionMode)}>
-                <SelectTrigger className="mt-1.5">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="low">Low - Best Quality</SelectItem>
-                  <SelectItem value="medium">Medium - Balanced</SelectItem>
-                  <SelectItem value="high">High - Smallest Size</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-card-foreground">Settings</h2>
+              <span className="text-[11px] text-muted-foreground font-mono">
+                {outputFormat.toUpperCase()} • {resolution}
+              </span>
             </div>
 
-            <div>
-              <label className="text-sm font-medium text-card-foreground">Output Resolution</label>
-              <Select value={resolution} onValueChange={(value) => setResolution(value as ResolutionMode)}>
-                <SelectTrigger className="mt-1.5">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="original">Original (Keep Resolution)</SelectItem>
-                  <SelectItem value="1080p">1080p - Full HD</SelectItem>
-                  <SelectItem value="720p">720p - HD</SelectItem>
-                  <SelectItem value="480p">480p - SD</SelectItem>
-                  <SelectItem value="360p">360p - Low</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
+            {/* Output Format */}
             <div>
               <label className="text-sm font-medium text-card-foreground">Output Format</label>
               <Select value={outputFormat} onValueChange={(value) => setOutputFormat(value as OutputFormat)}>
@@ -769,52 +777,127 @@ export default function VideoOptimizer() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="mp4">MP4 - Best Compatibility</SelectItem>
-                  <SelectItem value="webm">WebM - Web Optimized</SelectItem>
+                  <SelectItem value="mp4">MP4 (Best Compatibility & Ultra Fast)</SelectItem>
+                  <SelectItem value="webm">WebM (VP8/Opus Web Optimized)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
+            {/* Output Resolution */}
             <div>
-              <label className="text-sm font-medium text-card-foreground">Audio Bitrate: {audioBitrate}kbps</label>
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-card-foreground">Resolution</label>
+                <span className="text-[11px] text-primary font-medium">
+                  {resolution === "720p" || resolution === "1080p" ? "⚡ Fast Export" : ""}
+                </span>
+              </div>
+              <Select value={resolution} onValueChange={(value) => setResolution(value as ResolutionMode)}>
+                <SelectTrigger className="mt-1.5">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="original">Original (Keep Source Resolution)</SelectItem>
+                  <SelectItem value="1080p">1080p - Full HD (1920×1080)</SelectItem>
+                  <SelectItem value="720p">720p - HD (1280×720 • Recommended)</SelectItem>
+                  <SelectItem value="480p">480p - SD (854×480 • Very Fast)</SelectItem>
+                  <SelectItem value="360p">360p - Low (640×360 • Smallest)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Compression Level */}
+            <div>
+              <label className="text-sm font-medium text-card-foreground">Compression Level</label>
+              <Select value={compression} onValueChange={(value) => setCompression(value as CompressionMode)}>
+                <SelectTrigger className="mt-1.5">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">Low - Highest Visual Quality</SelectItem>
+                  <SelectItem value="medium">Medium - Balanced (~70-80% savings)</SelectItem>
+                  <SelectItem value="high">High - Maximum Size Reduction (~85%+)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Audio Bitrate */}
+            <div>
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-card-foreground">
+                  Audio Bitrate: {audioBitrate}kbps
+                </label>
+                <span className="text-xs text-muted-foreground font-mono">
+                  {outputFormat === "webm" ? "Opus" : "AAC"}
+                </span>
+              </div>
               <Slider
                 value={[Number.parseInt(audioBitrate, 10)]}
                 onValueChange={([value]) => setAudioBitrate(String(value))}
                 min={64}
-                max={320}
+                max={192}
                 step={32}
                 className="mt-2"
               />
-              <div className="mt-1 flex justify-between text-xs text-muted-foreground">
-                <span>64k</span>
-                <span>128k</span>
-                <span>192k</span>
-                <span>320k</span>
+              <div className="mt-1 flex justify-between text-[11px] text-muted-foreground">
+                <span>64k (Voice)</span>
+                <span>96k (Normal)</span>
+                <span>128k (Music)</span>
+                <span>192k (Hi-Fi)</span>
               </div>
             </div>
 
-            <Button
-              onClick={handleOptimize}
-              disabled={processing || !files.some((file) => file.status === "pending")}
-              className="w-full border-0 gradient-primary text-primary-foreground"
-            >
-              {processing ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {globalProgress < 10 ? "Preparing..." : 
-                   globalProgress < 99 ? "Optimizing..." : 
-                   "Finalizing..."} {globalProgress}%
-                </>
-              ) : (
-                <>
-                  Optimize Videos
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </>
+            {/* Action Buttons */}
+            <div className="space-y-2 pt-1">
+              <Button
+                onClick={handleOptimize}
+                disabled={!hasPending || processing}
+                className="w-full border-0 gradient-primary text-primary-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {processing ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {globalProgress < 10 ? "Preparing..." : "Optimizing..."} {globalProgress}%
+                  </>
+                ) : (
+                  <>
+                    Optimize Videos
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </>
+                )}
+              </Button>
+
+              {/* Re-optimize All Button - active when videos are completed */}
+              {hasDoneOrError && (
+                <Button
+                  type="button"
+                  onClick={() => handleReoptimize()}
+                  disabled={processing}
+                  className="w-full bg-primary/10 hover:bg-primary text-primary hover:text-white border border-primary/30 font-semibold transition-all shadow-sm"
+                >
+                  {processing ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Re-optimizing…
+                    </>
+                  ) : (
+                    <>
+                      <RotateCcw className="mr-2 h-4 w-4 transition-colors" />
+                      Re-optimize All
+                    </>
+                  )}
+                </Button>
               )}
-            </Button>
+
+              {doneFiles.length > 1 && (
+                <Button variant="outline" onClick={downloadAll} className="w-full">
+                  <Package className="mr-2 h-4 w-4" />
+                  Download ZIP ({doneFiles.length})
+                </Button>
+              )}
+            </div>
 
             {processing && (
-              <div className="space-y-2">
+              <div className="space-y-2 pt-1">
                 <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
                   <motion.div
                     className="h-full rounded-full gradient-primary"
@@ -823,38 +906,41 @@ export default function VideoOptimizer() {
                   />
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Overall progress: {globalProgress}% - {completedRef.current} of {pendingCountRef.current} files complete
+                  Overall progress: {globalProgress}% ({completedRef.current} of {pendingCountRef.current} videos completed)
                 </p>
               </div>
             )}
           </div>
 
-          <div className="rounded-xl border border-border bg-card p-4 shadow-card">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Fast & Efficient
-            </h3>
+          {/* Performance & Security Info Box */}
+          <div className="rounded-xl border border-border bg-card p-4 shadow-card space-y-2.5">
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              <Zap className="h-3.5 w-3.5 text-primary" />
+              <span>Fast Local Engine</span>
+            </div>
             <div className="flex flex-wrap gap-1.5">
-              {["Fast Presets", "Real Progress", "Smart Compression"].map((format) => (
+              {["Cached On PC", "WebM & MP4", "Zero Upload", "GPU/WASM"].map((tag) => (
                 <span
-                  key={format}
+                  key={tag}
                   className="rounded-md bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground"
                 >
-                  {format}
+                  {tag}
                 </span>
               ))}
             </div>
-            <p className="mt-3 text-xs text-muted-foreground">
-              Fast encoding with 70-85% compression. Real-time progress updates from FFmpeg. Large videos optimized efficiently.
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Videos never upload over slow internet. They process 100% locally on your PC via WebAssembly. For 4K/large videos, choosing <strong>720p or 1080p</strong> provides 5x faster export.
             </p>
           </div>
         </div>
 
+        {/* Upload & Video List */}
         <div className="space-y-4 lg:col-span-2">
           <DropZone
             accept="video/mp4,video/quicktime,video/webm,video/x-msvideo,.mp4,.mov,.webm,.avi,.mkv"
             onFiles={handleFiles}
             label="Drop videos here or click to browse"
-            sublabel="MP4, MOV, WebM, AVI, MKV supported"
+            sublabel="MP4, WebM, MOV, AVI, MKV • Instant local PC processing"
           />
 
           <AnimatePresence>
@@ -864,37 +950,70 @@ export default function VideoOptimizer() {
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, height: 0 }}
-                className="rounded-xl border border-border bg-card p-4 shadow-card"
+                className="rounded-xl border border-border bg-card p-4 shadow-card overflow-hidden"
               >
                 <div className="flex items-center gap-4">
-                  <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                    {fileObj.status === "done" ? (
-                      <CheckCircle2 className="h-5 w-5 text-green-500" />
-                    ) : fileObj.status === "error" ? (
-                      <AlertCircle className="h-5 w-5 text-destructive" />
-                    ) : fileObj.status === "processing" ? (
-                      <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                  {/* Video Thumbnail Preview */}
+                  <div className="relative h-16 w-24 flex-shrink-0 rounded-lg bg-secondary overflow-hidden flex items-center justify-center border border-border/50 group">
+                    {fileObj.thumbnail ? (
+                      <img
+                        src={fileObj.thumbnail}
+                        alt={fileObj.file.name}
+                        className="h-full w-full object-cover"
+                      />
                     ) : (
-                      <Video className="h-5 w-5 text-primary" />
+                      <Video className="h-6 w-6 text-muted-foreground" />
                     )}
+
+                    {/* Play Button Overlay */}
+                    {(fileObj.outputUrl || fileObj.thumbnail) && (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewModalUrl(fileObj.outputUrl || URL.createObjectURL(fileObj.file))}
+                        className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Preview video"
+                      >
+                        <Play className="h-5 w-5 text-white fill-white" />
+                      </button>
+                    )}
+
+                    {fileObj.duration ? (
+                      <span className="absolute bottom-1 right-1 rounded bg-black/75 px-1 text-[10px] font-mono text-white">
+                        {formatDuration(fileObj.duration)}
+                      </span>
+                    ) : null}
                   </div>
 
+                  {/* Metadata and Status */}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-card-foreground">{fileObj.file.name}</p>
-                    <div className="text-xs text-muted-foreground">
+
+                    <div className="text-xs text-muted-foreground mt-0.5">
                       {fileObj.status === "done" && fileObj.outputSize ? (
                         <span>
                           {formatSize(fileObj.file.size)}{" "}
-                          <span className="text-muted-foreground">-&gt;</span>{" "}
+                          {fileObj.width && fileObj.height ? `(${fileObj.width}×${fileObj.height})` : ""}
+                          <span className="text-muted-foreground"> → </span>
                           <span className="font-medium text-green-500">{formatSize(fileObj.outputSize)}</span>{" "}
-                          <span className="text-green-500">
+                          <span className="text-green-500 font-semibold">
                             (-{Math.max(0, Math.round((1 - fileObj.outputSize / fileObj.file.size) * 100))}%)
                           </span>
+                          {fileObj.outputWidth && fileObj.outputHeight ? (
+                            <span className="text-primary font-mono ml-1 font-medium">
+                              ({fileObj.outputWidth}×{fileObj.outputHeight}px • {fileObj.outputFormat?.toUpperCase()})
+                            </span>
+                          ) : null}
                         </span>
                       ) : fileObj.status === "error" ? (
-                        <span className="text-destructive">{fileObj.errorMsg || "Processing failed"}</span>
+                        <span className="text-destructive flex items-center gap-1">
+                          <AlertCircle className="h-3.5 w-3.5" />
+                          {fileObj.errorMsg || "Processing failed"}
+                        </span>
                       ) : (
-                        <span>{formatSize(fileObj.file.size)}</span>
+                        <span>
+                          {formatSize(fileObj.file.size)}
+                          {fileObj.width && fileObj.height ? ` • ${fileObj.width}×${fileObj.height}px` : ""}
+                        </span>
                       )}
                     </div>
 
@@ -907,34 +1026,60 @@ export default function VideoOptimizer() {
                             transition={{ duration: 0.3 }}
                           />
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          Processing: {fileObj.progress}% complete
+                        <p className="text-[11px] text-muted-foreground">
+                          Optimizing: {fileObj.progress}% complete
                         </p>
                       </div>
                     )}
                   </div>
 
-                  <div className="flex gap-1.5">
+                  {/* Card Actions */}
+                  <div className="flex items-center gap-1.5">
                     {fileObj.status === "done" && fileObj.outputUrl && (
-                      <Button size="icon" variant="ghost" title="Download" onClick={() => downloadVideo(fileObj)}>
-                        <Download className="h-4 w-4" />
-                      </Button>
+                      <>
+                        {/* Single Video Re-optimize button */}
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          title="Re-optimize this video with current settings"
+                          disabled={processing}
+                          onClick={() => handleReoptimize(fileObj.id)}
+                          className="text-muted-foreground hover:bg-primary hover:text-white transition-colors"
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                        </Button>
+
+                        {/* Download button */}
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          title="Download optimized video"
+                          onClick={() => downloadVideo(fileObj)}
+                        >
+                          <Download className="h-4 w-4" />
+                        </Button>
+                      </>
                     )}
+
+                    {fileObj.status === "done" ? (
+                      <CheckCircle2 className="h-5 w-5 text-green-500" />
+                    ) : null}
 
                     {fileObj.status === "error" && (
                       <Button
                         size="icon"
                         variant="ghost"
-                        title="Retry"
-                        onClick={() => updateFile(fileObj.id, { status: "pending", errorMsg: undefined, progress: 0 })}
+                        title="Retry optimization"
+                        onClick={() => handleReoptimize(fileObj.id)}
                       >
-                        <ArrowRight className="h-4 w-4 text-primary" />
+                        <RotateCcw className="h-4 w-4 text-primary" />
                       </Button>
                     )}
 
                     <Button
                       size="icon"
                       variant="ghost"
+                      title="Remove file"
                       onClick={() => setFiles((prev) => prev.filter((item) => item.id !== fileObj.id))}
                     >
                       <Trash2 className="h-4 w-4 text-destructive" />
@@ -946,6 +1091,37 @@ export default function VideoOptimizer() {
           </AnimatePresence>
         </div>
       </div>
+
+      {/* Video Preview Modal */}
+      {previewModalUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+          onClick={() => setPreviewModalUrl(null)}
+        >
+          <div
+            className="relative w-full max-w-3xl overflow-hidden rounded-2xl bg-card border border-border shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-3 border-b border-border bg-card">
+              <span className="text-sm font-semibold flex items-center gap-2">
+                <Film className="h-4 w-4 text-primary" />
+                Video Preview
+              </span>
+              <Button size="icon" variant="ghost" onClick={() => setPreviewModalUrl(null)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="aspect-video bg-black flex items-center justify-center">
+              <video
+                src={previewModalUrl}
+                controls
+                autoPlay
+                className="max-h-[70vh] w-full"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
