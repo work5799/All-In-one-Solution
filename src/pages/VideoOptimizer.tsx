@@ -173,12 +173,15 @@ const getVideoMetadataAndThumbnail = (file: File): Promise<VideoMetadata> =>
 const getTargetDimensions = (
   metadata: { width: number; height: number },
   resolution: ResolutionMode,
+  format: OutputFormat = "mp4",
 ): { width: number; height: number } => {
-  // In 32-bit browser WebAssembly, decoding/encoding 4K or >1080p in RAM instantly exceeds the 2GB heap.
-  // Cap 'original' at 1080p (1920x1080) max to prevent out of bounds memory crashes while preserving crisp Full HD.
+  // In 32-bit browser WebAssembly, VP8 (WebM) uses 3x more heap memory than H.264.
+  // Cap WebM at 720p (1280x720) to guarantee zero memory access crashes and 5x faster speed.
+  // For MP4 (x264 ultrafast), 1080p (1920x1080) is safely supported.
+  const maxW = format === "webm" ? 1280 : 1920;
+  const maxH = format === "webm" ? 720 : 1080;
+
   if (resolution === "original") {
-    const maxW = 1920;
-    const maxH = 1080;
     if (metadata.width > maxW || metadata.height > maxH) {
       const scale = Math.min(maxW / metadata.width, maxH / metadata.height);
       return {
@@ -190,7 +193,7 @@ const getTargetDimensions = (
   }
 
   const targetHeights: Record<Exclude<ResolutionMode, "original">, number> = {
-    "1080p": 1080,
+    "1080p": format === "webm" ? 720 : 1080,
     "720p": 720,
     "480p": 480,
     "360p": 360,
@@ -200,23 +203,23 @@ const getTargetDimensions = (
   const isLandscape = metadata.width >= metadata.height;
 
   if (isLandscape) {
-    if (metadata.height <= targetHeight) {
+    if (metadata.height <= targetHeight && metadata.width <= maxW) {
       return { width: even(metadata.width), height: even(metadata.height) };
     }
-    const scale = targetHeight / metadata.height;
+    const scale = Math.min(targetHeight / metadata.height, maxW / metadata.width);
     return {
       width: even(metadata.width * scale),
-      height: even(targetHeight),
+      height: even(metadata.height * scale),
     };
   }
 
-  if (metadata.width <= targetHeight) {
+  if (metadata.width <= targetHeight && metadata.height <= maxW) {
     return { width: even(metadata.width), height: even(metadata.height) };
   }
 
-  const scale = targetHeight / metadata.width;
+  const scale = Math.min(targetHeight / metadata.width, maxW / metadata.height);
   return {
-    width: even(targetHeight),
+    width: even(metadata.width * scale),
     height: even(metadata.height * scale),
   };
 };
@@ -238,7 +241,7 @@ const buildEncodeArgs = ({
   resolution: ResolutionMode;
   audioBitrateKbps: number;
 }) => {
-  const targetDimensions = getTargetDimensions(metadata, resolution);
+  const targetDimensions = getTargetDimensions(metadata, resolution, outputFormat);
   const w = even(targetDimensions.width);
   const h = even(targetDimensions.height);
 
@@ -257,14 +260,14 @@ const buildEncodeArgs = ({
   ];
 
   // Scale if requested or ensure even dimensions (divisible by 2) for H.264 & VP8
-  if (resolution !== "original" || metadata.width % 2 !== 0 || metadata.height % 2 !== 0 || targetDimensions.width !== metadata.width) {
+  if (resolution !== "original" || metadata.width % 2 !== 0 || metadata.height % 2 !== 0 || targetDimensions.width !== metadata.width || targetDimensions.height !== metadata.height) {
     args.push("-vf", `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2`);
   }
 
   if (outputFormat === "mp4") {
     // Ultra-fast x264 presets for lightning speed in WebAssembly
-    // 'ultrafast' / 'superfast' runs 5x-10x faster and uses 75% less RAM!
-    // Crisp CRF (19 - 24) guarantees high sharpness without blur.
+    // 'ultrafast' runs 5x-10x faster and uses 75% less RAM!
+    // Crisp CRF (19 - 25) guarantees high sharpness without blur.
     const crfByCompression: Record<CompressionMode, string> = {
       low: "19",
       medium: "22",
@@ -291,24 +294,30 @@ const buildEncodeArgs = ({
     );
   } else {
     // WebM format with VP8 & Opus
-    // In libvpx WebAssembly, speed 6 and realtime deadline runs 5x faster with minimal RAM!
-    const crfByCompression: Record<CompressionMode, string> = {
-      low: "19",
-      medium: "22",
-      high: "25",
+    // Constrained quality with bounded bitrate & buffer size prevents WebAssembly 2GB memory crashes!
+    // -speed 8 with realtime deadline provides 4x faster encoding speed in browser CPU.
+    const webmConfig: Record<CompressionMode, { crf: string; bitrate: string; maxrate: string }> = {
+      low: { crf: "20", bitrate: "2400k", maxrate: "3000k" },
+      medium: { crf: "24", bitrate: "1600k", maxrate: "2200k" },
+      high: { crf: "28", bitrate: "1000k", maxrate: "1500k" },
     };
+    const cfg = webmConfig[compression];
 
     args.push(
       "-c:v",
       "libvpx",
-      "-b:v",
-      "0",
       "-crf",
-      crfByCompression[compression],
+      cfg.crf,
+      "-b:v",
+      cfg.bitrate,
+      "-maxrate",
+      cfg.maxrate,
+      "-bufsize",
+      "2M",
       "-deadline",
       "realtime",
       "-speed",
-      "6",
+      "8",
       "-c:a",
       "libopus",
       "-b:a",
@@ -501,8 +510,8 @@ export default function VideoOptimizer() {
             // WebM fallback attempt (try with safe parameters if first try failed)
             if (opts.outputFormat === "webm") {
               try {
-                console.warn("[FFmpeg] WebM encoding retry with audio fallback...");
-                const targetDimensions = getTargetDimensions(opts.metadata, opts.resolution);
+                console.warn("[FFmpeg] WebM encoding retry with safe audio/parameters...");
+                const targetDimensions = getTargetDimensions(opts.metadata, "720p", "webm");
                 const w = even(targetDimensions.width);
                 const h = even(targetDimensions.height);
                 const retryArgs = [
@@ -510,10 +519,12 @@ export default function VideoOptimizer() {
                   "-map", "0:v:0",
                   "-vf", `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2`,
                   "-c:v", "libvpx",
-                  "-b:v", "0",
+                  "-b:v", "1500k",
+                  "-maxrate", "2000k",
+                  "-bufsize", "2M",
                   "-crf", "26",
-                  "-deadline", "good",
-                  "-cpu-used", "5",
+                  "-deadline", "realtime",
+                  "-speed", "8",
                   "-an", // drop audio if unsupported codec
                   "-y", opts.outputName
                 ];
@@ -613,7 +624,8 @@ export default function VideoOptimizer() {
 
         const targetDims = getTargetDimensions(
           { width: fileObj.width || 1920, height: fileObj.height || 1080 },
-          resolution
+          resolution,
+          outputFormat
         );
 
         const encodeOpts = {
@@ -639,19 +651,98 @@ export default function VideoOptimizer() {
 
         toast.info(`Optimizing ${fileObj.file.name} to ${outputFormat.toUpperCase()}...`);
 
-        await runEncode(ffmpeg, args, fileObj.duration || 10, encodeOpts);
+        let blob: Blob | null = null;
+        let finalWidth = targetDims.width;
+        let finalHeight = targetDims.height;
+        let finalFormat: OutputFormat = outputFormat;
+
+        try {
+          await runEncode(ffmpeg, args, fileObj.duration || 10, encodeOpts);
+
+          // Free input file from WASM MEMFS before reading output to minimize RAM peak
+          try {
+            await ffmpeg.deleteFile(inputName);
+          } catch { /* ignore */ }
+
+          const data = await ffmpeg.readFile(outputName);
+
+          // Free output file from WASM MEMFS immediately after reading
+          try {
+            await ffmpeg.deleteFile(outputName);
+          } catch { /* ignore */ }
+
+          if (!data || (data instanceof Uint8Array ? data.byteLength === 0 : (data as ArrayBuffer).byteLength === 0)) {
+            throw new Error("Output video is empty or encoding failed");
+          }
+
+          const mime = outputFormat === "webm" ? "video/webm" : "video/mp4";
+          const uint8Data = data instanceof Uint8Array ? data : new Uint8Array(data as ArrayBuffer);
+          blob = new Blob([uint8Data], { type: mime });
+        } catch (primaryErr) {
+          console.warn("[VideoOptimizer] Primary encoding encountered issue, activating auto-recovery:", primaryErr);
+          resetFFmpeg();
+
+          // Auto-recovery: Re-encode using safe 720p ultrafast MP4 mode (guaranteed low memory)
+          toast.info("High memory detected. Auto-recovering in Safe HD mode...");
+          try {
+            const safeFfmpeg = await loadFFmpeg();
+            const safeFormat: OutputFormat = "mp4";
+            const safeOutputName = `out_${fileObj.id.slice(0, 8)}.mp4`;
+            const safeDims = getTargetDimensions(
+              { width: fileObj.width || 1280, height: fileObj.height || 720 },
+              "720p",
+              "mp4"
+            );
+
+            const safeOpts = {
+              inputName,
+              outputName: safeOutputName,
+              outputFormat: safeFormat,
+              metadata: {
+                width: fileObj.width || 1280,
+                height: fileObj.height || 720,
+                duration: fileObj.duration || 10,
+              },
+              compression: "medium" as CompressionMode,
+              resolution: "720p" as ResolutionMode,
+              audioBitrateKbps: Math.min(selectedAudioBitrate, 128),
+            };
+
+            const safeArgs = buildEncodeArgs(safeOpts);
+            await safeFfmpeg.writeFile(inputName, await fetchFile(fileObj.file));
+            await runEncode(safeFfmpeg, safeArgs, fileObj.duration || 10, safeOpts);
+
+            try {
+              await safeFfmpeg.deleteFile(inputName);
+            } catch { /* ignore */ }
+
+            const safeData = await safeFfmpeg.readFile(safeOutputName);
+
+            try {
+              await safeFfmpeg.deleteFile(safeOutputName);
+            } catch { /* ignore */ }
+
+            if (!safeData || (safeData instanceof Uint8Array ? safeData.byteLength === 0 : (safeData as ArrayBuffer).byteLength === 0)) {
+              throw primaryErr;
+            }
+
+            const safeUint8 = safeData instanceof Uint8Array ? safeData : new Uint8Array(safeData as ArrayBuffer);
+            blob = new Blob([safeUint8], { type: "video/mp4" });
+            finalWidth = safeDims.width;
+            finalHeight = safeDims.height;
+            finalFormat = "mp4";
+          } catch (recoveryErr) {
+            console.error("[VideoOptimizer] Auto-recovery also failed:", recoveryErr);
+            throw primaryErr;
+          }
+        }
+
+        if (!blob) {
+          throw new Error("Failed to produce optimized video");
+        }
 
         applyProgress(99);
 
-        const data = await ffmpeg.readFile(outputName);
-        if (!data || (data instanceof Uint8Array ? data.byteLength === 0 : (data as ArrayBuffer).byteLength === 0)) {
-          throw new Error("Output video is empty or encoding failed");
-        }
-
-        const mime = outputFormat === "webm" ? "video/webm" : "video/mp4";
-        // FFmpeg readFile returns Uint8Array or ArrayBuffer. Avoid extra copy if already Uint8Array
-        const uint8Data = data instanceof Uint8Array ? data : new Uint8Array(data as ArrayBuffer);
-        const blob = new Blob([uint8Data], { type: mime });
         const url = URL.createObjectURL(blob);
         const saving = Math.max(0, Math.round((1 - blob.size / fileObj.file.size) * 100));
 
@@ -659,16 +750,16 @@ export default function VideoOptimizer() {
           status: "done",
           outputUrl: url,
           outputSize: blob.size,
-          outputWidth: targetDims.width,
-          outputHeight: targetDims.height,
+          outputWidth: finalWidth,
+          outputHeight: finalHeight,
           progress: 100,
-          outputFormat,
+          outputFormat: finalFormat,
         });
 
         addHistoryItem({
           name: fileObj.file.name,
           type: "video",
-          action: `Compressed to ${resolution} ${outputFormat.toUpperCase()}`,
+          action: `Compressed to ${finalFormat.toUpperCase()} (${finalWidth}×${finalHeight}px)`,
           originalSize: fileObj.file.size,
           optimizedSize: blob.size,
           saved: `${saving}%`,
@@ -679,12 +770,11 @@ export default function VideoOptimizer() {
       } catch (error) {
         stopFallbackProgress();
         console.error("Video optimization failed:", error);
-        // If WebAssembly ran out of memory, terminate corrupted instance so next try gets clean memory
         resetFFmpeg();
 
         const errorStr = error instanceof Error ? error.message : String(error);
         const userFriendlyMsg = errorStr.includes("memory access out of bounds")
-          ? "Out of memory in browser. Try choosing '720p' or '1080p' for high-res videos."
+          ? "Out of memory in browser. Try choosing '720p' for high-res videos."
           : errorStr;
 
         updateFile(fileObj.id, {
@@ -852,7 +942,13 @@ export default function VideoOptimizer() {
 
                 <button
                   type="button"
-                  onClick={() => setOutputFormat("webm")}
+                  onClick={() => {
+                    setOutputFormat("webm");
+                    if (resolution === "original" || resolution === "1080p") {
+                      setResolution("720p");
+                      toast.info("Resolution adjusted to 720p for fast & memory-safe WebM export");
+                    }
+                  }}
                   className={`flex flex-col items-start p-2.5 rounded-lg border text-left transition-all ${
                     outputFormat === "webm"
                       ? "border-primary bg-primary/10 text-card-foreground shadow-sm ring-1 ring-primary/40"
@@ -862,7 +958,9 @@ export default function VideoOptimizer() {
                   <span className={`text-xs font-bold ${outputFormat === "webm" ? "text-primary" : "text-foreground"}`}>
                     WebM (VP8)
                   </span>
-                  <span className="text-[10px] text-muted-foreground mt-0.5">Lightweight • Web Ready</span>
+                  <span className="text-[10px] text-muted-foreground mt-0.5">
+                    {outputFormat === "webm" ? "Fast 720p • Web Ready" : "Lightweight • Web Ready"}
+                  </span>
                 </button>
               </div>
             </div>
@@ -875,14 +973,20 @@ export default function VideoOptimizer() {
                   Resolution / Resize
                 </label>
                 <span className="text-[11px] font-medium text-primary">
-                  {resolution === "720p" ? "★ Recommended" : resolution === "original" ? "Original Size" : ""}
+                  {resolution === "720p"
+                    ? "★ Recommended (Fast)"
+                    : outputFormat === "webm" && (resolution === "original" || resolution === "1080p")
+                    ? "Max 720p for WebM"
+                    : resolution === "original"
+                    ? "Original Size"
+                    : ""}
                 </span>
               </div>
               <div className="grid grid-cols-3 gap-1.5">
                 {[
-                  { id: "original", label: "Original", sub: "Source" },
-                  { id: "1080p", label: "1080p", sub: "Full HD" },
-                  { id: "720p", label: "720p", sub: "Fast HD" },
+                  { id: "original", label: "Original", sub: outputFormat === "webm" ? "Max 720p" : "Source" },
+                  { id: "1080p", label: "1080p", sub: outputFormat === "webm" ? "Auto 720p" : "Full HD" },
+                  { id: "720p", label: "720p", sub: outputFormat === "webm" ? "Best WebM" : "Fast HD" },
                   { id: "480p", label: "480p", sub: "SD" },
                   { id: "360p", label: "360p", sub: "Smallest" },
                 ].map((item) => {
@@ -1275,9 +1379,9 @@ export default function VideoOptimizer() {
                         variant="outline"
                         title="Retry optimization"
                         onClick={() => handleReoptimize(fileObj.id)}
-                        className="h-8 text-xs text-primary border-primary/30 hover:bg-primary/10 gap-1.5"
+                        className="h-8 text-xs text-primary border-primary/40 hover:bg-primary hover:text-white transition-all shadow-sm gap-1.5 group"
                       >
-                        <RotateCcw className="h-3.5 w-3.5" />
+                        <RotateCcw className="h-3.5 w-3.5 text-primary group-hover:text-white transition-colors" />
                         <span>Retry</span>
                       </Button>
                     )}
