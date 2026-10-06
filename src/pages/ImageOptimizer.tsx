@@ -875,7 +875,7 @@ export default function ImageOptimizer() {
                   variant="outline"
                   onClick={() => handleReoptimize()}
                   disabled={processing}
-                  className="w-full border-primary/40 hover:bg-primary/10 text-primary font-medium"
+                  className="w-full border-primary/50 text-primary hover:bg-primary hover:text-primary-foreground font-medium shadow-sm transition-colors"
                 >
                   {processing ? (
                     <>
@@ -998,8 +998,9 @@ export default function ImageOptimizer() {
                           title="Re-optimize with current settings"
                           disabled={processing}
                           onClick={() => handleReoptimize(f.id)}
+                          className="hover:text-primary"
                         >
-                          <RotateCcw className="h-4 w-4 text-muted-foreground hover:text-foreground" />
+                          <RotateCcw className="h-4 w-4" />
                         </Button>
                         <Button size="icon" variant="ghost" onClick={() => downloadSingle(f)}>
                           <Download className="h-4 w-4" />
