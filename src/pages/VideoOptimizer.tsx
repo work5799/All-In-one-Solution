@@ -240,8 +240,10 @@ const buildEncodeArgs = ({
     "0:a?",
     "-sn",
     "-dn",
+    // In WebAssembly 32-bit linear memory, threads 0 creates too many pthreads exceeding 2GB heap limit!
+    // Using 1 thread or 2 threads max prevents WebAssembly memory access out of bounds error.
     "-threads",
-    "0",
+    "2",
   ];
 
   // Scale if requested or ensure even dimensions (divisible by 2) for H.264 & VP8
@@ -251,7 +253,7 @@ const buildEncodeArgs = ({
 
   if (outputFormat === "mp4") {
     // x264 presets & CRF values tuned for crispness without blur
-    // 'veryfast' with film tune retains sharp textures, faces, and fine lines
+    // 'veryfast' provides sharp details without degrading subpixel estimation
     // CRF 18: Virtually lossless (Exact visual replica of source)
     // CRF 20: Crisp & sharp standard HD (Clean edges, ~45% reduction)
     // CRF 22: High compression with intact sharpness (Solid 55-65% reduction, zero blur/pixelation)
@@ -266,8 +268,6 @@ const buildEncodeArgs = ({
       "libx264",
       "-preset",
       "veryfast",
-      "-tune",
-      "film",
       "-pix_fmt",
       "yuv420p",
       "-crf",
@@ -638,12 +638,14 @@ export default function VideoOptimizer() {
         applyProgress(99);
 
         const data = await ffmpeg.readFile(outputName);
-        if (!data || (data as ArrayBuffer).byteLength === 0) {
+        if (!data || (data instanceof Uint8Array ? data.byteLength === 0 : (data as ArrayBuffer).byteLength === 0)) {
           throw new Error("Output video is empty or encoding failed");
         }
 
         const mime = outputFormat === "webm" ? "video/webm" : "video/mp4";
-        const blob = new Blob([new Uint8Array(data as ArrayBuffer)], { type: mime });
+        // FFmpeg readFile returns Uint8Array or ArrayBuffer. Avoid extra copy if already Uint8Array
+        const uint8Data = data instanceof Uint8Array ? data : new Uint8Array(data as ArrayBuffer);
+        const blob = new Blob([uint8Data], { type: mime });
         const url = URL.createObjectURL(blob);
         const saving = Math.max(0, Math.round((1 - blob.size / fileObj.file.size) * 100));
 
@@ -671,9 +673,17 @@ export default function VideoOptimizer() {
       } catch (error) {
         stopFallbackProgress();
         console.error("Video optimization failed:", error);
+        // If WebAssembly ran out of memory, terminate corrupted instance so next try gets clean memory
+        resetFFmpeg();
+
+        const errorStr = error instanceof Error ? error.message : String(error);
+        const userFriendlyMsg = errorStr.includes("memory access out of bounds")
+          ? "Out of memory in browser. Try choosing '720p' or '1080p' for high-res videos."
+          : errorStr;
+
         updateFile(fileObj.id, {
           status: "error",
-          errorMsg: error instanceof Error ? error.message : "Processing failed",
+          errorMsg: userFriendlyMsg,
         });
         toast.error(`Failed: ${fileObj.file.name}`);
       } finally {
