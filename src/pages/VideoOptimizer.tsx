@@ -355,12 +355,11 @@ const buildEncodeArgs = ({
       "-bufsize",
       `${bufsizeKbps}k`,
       "-c:a",
-      "libopus",
+      "libvorbis",
       "-b:a",
-      `${Math.min(audioBitrateKbps, 96)}k`,
-      // IMPORTANT: libopus strictly requires 48000 Hz sample rate. Without -ar 48000, 44.1kHz audio causes an immediate FFmpeg crash!
+      `${Math.min(audioBitrateKbps, 128)}k`,
       "-ar",
-      "48000",
+      "44100",
     );
   }
 
@@ -463,6 +462,7 @@ export default function VideoOptimizer() {
 
     const logHandler = ({ message }: { message: string }) => {
       markActivity();
+      console.log("[FFmpeg log]", message);
       const timeMatch = message.match(/time=(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)/);
       if (timeMatch && currentDurationRef.current > 0) {
         const [, hours, minutes, seconds] = timeMatch;
@@ -772,8 +772,56 @@ export default function VideoOptimizer() {
             finalHeight = safeDims.height;
             finalFormat = safeFormat;
           } catch (recoveryErr) {
-            console.error("[VideoOptimizer] Auto-recovery also failed:", recoveryErr);
-            throw primaryErr;
+            console.error("[VideoOptimizer] WebM recovery encountered issue:", recoveryErr);
+            // Tier 2 Fallback: If WebM fails due to browser WebAssembly memory/codec limit, transcode via universal MP4
+            if (outputFormat === "webm") {
+              try {
+                toast.info("WebM engine memory limit: Auto-transcoding with universal MP4...");
+                resetFFmpeg();
+                const mp4Ffmpeg = await loadFFmpeg();
+                const mp4OutputName = `out_${fileObj.id.slice(0, 8)}.mp4`;
+                const mp4Dims = getTargetDimensions(
+                  { width: fileObj.width || 1280, height: fileObj.height || 720 },
+                  "720p",
+                  "mp4"
+                );
+                const mp4Opts = {
+                  inputName,
+                  outputName: mp4OutputName,
+                  outputFormat: "mp4" as OutputFormat,
+                  metadata: {
+                    width: fileObj.width || 1280,
+                    height: fileObj.height || 720,
+                    duration: fileObj.duration || 10,
+                    sourceBitrateKbps: Math.min(fileObj.sourceBitrateKbps || 2000, 1200),
+                  },
+                  compression: "medium" as CompressionMode,
+                  resolution: "720p" as ResolutionMode,
+                  audioBitrateKbps: 96,
+                };
+                const mp4Args = buildEncodeArgs(mp4Opts);
+                await mp4Ffmpeg.writeFile(inputName, await fetchFile(fileObj.file));
+                await runEncode(mp4Ffmpeg, mp4Args, fileObj.duration || 10, mp4Opts);
+                try { await mp4Ffmpeg.deleteFile(inputName); } catch { /* ignore */ }
+                const mp4Data = await mp4Ffmpeg.readFile(mp4OutputName);
+                try { await mp4Ffmpeg.deleteFile(mp4OutputName); } catch { /* ignore */ }
+
+                if (mp4Data && (mp4Data instanceof Uint8Array ? mp4Data.byteLength > 0 : (mp4Data as ArrayBuffer).byteLength > 0)) {
+                  const safeUint8 = mp4Data instanceof Uint8Array ? mp4Data : new Uint8Array(mp4Data as ArrayBuffer);
+                  blob = new Blob([safeUint8], { type: "video/mp4" });
+                  finalWidth = mp4Dims.width;
+                  finalHeight = mp4Dims.height;
+                  finalFormat = "mp4";
+                } else {
+                  throw recoveryErr;
+                }
+              } catch (mp4Err) {
+                console.error("[VideoOptimizer] All recoveries failed:", mp4Err);
+                throw primaryErr;
+              }
+            } else {
+              throw primaryErr;
+            }
           }
         }
 
@@ -1117,7 +1165,7 @@ export default function VideoOptimizer() {
                   Audio Quality: <span className="text-foreground font-mono">{audioBitrate} kbps</span>
                 </label>
                 <span className="text-[11px] text-primary font-mono font-medium">
-                  {outputFormat === "webm" ? "Opus (48kHz)" : "AAC (44.1kHz)"}
+                  {outputFormat === "webm" ? "Vorbis (44.1kHz)" : "AAC (44.1kHz)"}
                 </span>
               </div>
               <Slider
